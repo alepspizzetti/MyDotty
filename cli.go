@@ -29,6 +29,8 @@ func run(args []string, out, stderr io.Writer) int {
 	att := flags.Bool("att", false, "salvar, baixar e enviar todas as alterações acompanhadas")
 	flags.BoolVar(att, "sync", false, "sinônimo de --att")
 	status := flags.Bool("status", false, "listar arquivos acompanhados e suas alterações")
+	autoEnable := flags.Bool("auto-sync", false, "ativar sincronização após atualizações do pacman (Arch/CachyOS)")
+	autoDisable := flags.Bool("no-auto-sync", false, "desativar a sincronização automática")
 	apply := flags.Bool("apply", false, "tentar instalar novamente após mover arquivos em conflito")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "MyDotty · suas configurações salvas e sincronizadas\n\nUse mydotty para abrir a interface, ou escolha uma ação:")
@@ -44,13 +46,20 @@ func run(args []string, out, stderr io.Writer) int {
 	actions := 0
 	flags.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "init", "add", "remove", "diff", "att", "sync", "status", "apply":
+		case "init", "add", "remove", "diff", "att", "sync", "status", "apply", "auto-sync", "no-auto-sync":
 			actions++
 		}
 	})
 	if flags.NArg() != 0 || actions > 1 {
 		fmt.Fprintln(stderr, "Escolha uma ação por vez. Use mydotty --help para ver exemplos.")
 		return 2
+	}
+	if *autoEnable || *autoDisable {
+		if err := configureAutoSync(*autoEnable, out, stderr); err != nil {
+			fmt.Fprintln(stderr, safe(err.Error()))
+			return 1
+		}
+		return 0
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		fmt.Fprintln(stderr, "Instale o Git para usar o MyDotty.")

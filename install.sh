@@ -9,6 +9,23 @@ case "$prefix" in
 esac
 bin_dir=${prefix%/}/bin
 
+auto_sync=false
+if [ "$#" -gt 1 ]; then
+    printf '%s\n' 'Uso: ./install.sh [--auto-sync | --no-auto-sync]' >&2
+    exit 1
+fi
+case "${1:-}" in
+    --auto-sync) auto_sync=true ;;
+    --no-auto-sync) exec "$bin_dir/mydotty" --no-auto-sync ;;
+    --help|-h)
+        printf '%s\n' 'Uso: ./install.sh [--auto-sync | --no-auto-sync]' \
+            '  --auto-sync     Instalar e ativar sincronização após atualizar pacotes.' \
+            '  --no-auto-sync  Desativar a integração, mantendo o programa instalado.'
+        exit 0 ;;
+    '') ;;
+    *) printf '%s\n' 'Opção desconhecida. Use ./install.sh --help.' >&2; exit 1 ;;
+esac
+
 if ! command -v git >/dev/null 2>&1; then
     printf '%s\n' 'Instale o Git antes de instalar o MyDotty.' >&2
     exit 1
@@ -46,6 +63,10 @@ else
     printf 'Permissão de administrador necessária para instalar em %s.\n' "$bin_dir"
     sudo install -d "$bin_dir"
     sudo install -m 755 "$binary" "$bin_dir/mydotty"
+fi
+
+if [ "$auto_sync" = true ]; then
+    "$bin_dir/mydotty" --auto-sync
 fi
 
 printf '\nInstalado em %s/mydotty\n' "$bin_dir"

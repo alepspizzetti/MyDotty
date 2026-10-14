@@ -44,7 +44,7 @@ func TestCLIWorkflowWithoutTerminal(t *testing.T) {
 }
 
 func TestCLIRejectsAmbiguousActionsAndDocumentsCommands(t *testing.T) {
-	for _, args := range [][]string{{"--add", "x", "--att"}, {"unexpected"}, {"--add", ""}} {
+	for _, args := range [][]string{{"--add", "x", "--att"}, {"--auto-sync", "--att"}, {"unexpected"}, {"--add", ""}} {
 		var out, stderr bytes.Buffer
 		if code := run(args, &out, &stderr); code == 0 {
 			t.Fatalf("accepted %v", args)
@@ -54,7 +54,7 @@ func TestCLIRejectsAmbiguousActionsAndDocumentsCommands(t *testing.T) {
 	if code := run([]string{"--help"}, &out, &stderr); code != 0 {
 		t.Fatal(code)
 	}
-	for _, action := range []string{"-init", "-add", "-att", "-sync", "-status", "-diff", "-remove", "-apply"} {
+	for _, action := range []string{"-init", "-add", "-att", "-sync", "-status", "-diff", "-remove", "-apply", "-auto-sync", "-no-auto-sync"} {
 		if !strings.Contains(stderr.String(), action) {
 			t.Fatalf("help omits %s", action)
 		}

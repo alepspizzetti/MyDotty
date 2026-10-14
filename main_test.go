@@ -53,16 +53,17 @@ func TestLayoutFitsTerminal(t *testing.T) {
 		files = append(files, fileEntry{fmt.Sprintf(".config/app/config-%02d", i), "  "})
 	}
 	states := map[string]model{
-		"files":    {state: snapshot{files: files, branch: "main", remote: strings.Repeat("remote", 30)}, cursor: 30},
-		"empty":    {},
-		"missing":  {missing: true},
-		"checkout": {state: snapshot{needsCheckout: true}},
-		"busy":     {busy: true},
-		"message":  {message: strings.Repeat("erro longo", 40) + "\nsegunda linha\nterceira linha"},
-		"add":      {prompt: "add", input: strings.Repeat("configuração/", 30)},
-		"commit":   {prompt: "commit", input: "Atualiza configuração"},
-		"clone":    {missing: true, prompt: "clone"},
-		"diff":     {detail: strings.Repeat("+alteração\n", 60), offset: 500},
+		"files":     {state: snapshot{files: files, branch: "main", remote: strings.Repeat("remote", 30)}, cursor: 30},
+		"empty":     {},
+		"missing":   {missing: true},
+		"checkout":  {state: snapshot{needsCheckout: true}},
+		"busy":      {busy: true},
+		"message":   {message: strings.Repeat("erro longo", 40) + "\nsegunda linha\nterceira linha"},
+		"add":       {prompt: "add", input: strings.Repeat("configuração/", 30)},
+		"commit":    {prompt: "commit", input: "Atualiza configuração"},
+		"clone":     {missing: true, prompt: "clone"},
+		"auto-sync": {prompt: "auto-sync"},
+		"diff":      {detail: strings.Repeat("+alteração\n", 60), offset: 500},
 	}
 	for _, size := range [][2]int{{1, 1}, {35, 10}, {59, 15}, {60, 16}, {60, 19}, {60, 20}, {80, 24}, {120, 36}, {160, 48}} {
 		for name, m := range states {
@@ -82,7 +83,7 @@ func TestLayoutFitsTerminal(t *testing.T) {
 					if !strings.Contains(strings.ToLower(ansi.Strip(output)), "sair") && m.prompt == "" {
 						t.Fatal("quit shortcut is missing")
 					}
-					if m.prompt != "" && !strings.Contains(output, "▏") {
+					if m.prompt != "" && m.prompt != "auto-sync" && !strings.Contains(output, "▏") {
 						t.Fatal("input cursor is missing")
 					}
 					if name == "files" && !strings.Contains(output, files[m.cursor].path) {

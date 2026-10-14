@@ -10,7 +10,7 @@ Os arquivos continuam onde seus aplicativos esperam encontrá-los. O histórico 
 
 *Capturas geradas a partir da interface do MyDotty, com caminhos e repositório de exemplo.*
 
-[Instalar](#instalação) · [Primeiro uso com imagens](#primeiro-uso-passo-a-passo) · [Comandos](#comandos-e-atalhos) · [Outro computador](#usar-em-outro-computador) · [Atualizar](#atualizar-o-mydotty) · [Ajuda](#quando-algo-não-funcionar)
+[Instalar](#instalação) · [Primeiro uso com imagens](#primeiro-uso-passo-a-passo) · [Comandos](#comandos-e-atalhos) · [Outro computador](#usar-em-outro-computador) · [Atualizar](#atualizar-o-mydotty) · [Auto-sync](#sincronizar-ao-atualizar-o-sistema) · [Ajuda](#quando-algo-não-funcionar)
 
 ## Instalação
 
@@ -134,6 +134,8 @@ Prefere ficar no shell? As mesmas ações estão disponíveis sem abrir a interf
 | `mydotty --remove CAMINHO` | **Del** | Parar de acompanhar, mantendo os arquivos locais |
 | `mydotty --apply` | **F4**, se a instalação estiver pendente | Repetir a instalação após mover caminhos existentes |
 | `mydotty --help` | **F1** | Consultar comandos e instruções |
+| `mydotty --auto-sync` | **F6** → Enter | Ativar sincronização após atualizações do pacman |
+| `mydotty --no-auto-sync` | **F6** → Enter, se ativado | Desativar a sincronização automática |
 
 **Esc** cancela entradas e fecha diferenças; na tela principal, sai do programa. **Ctrl+C** também encerra. Na interface, **Del** abre uma confirmação antes de parar de acompanhar o arquivo. Depois, sincronize para registrar essa retirada no repositório.
 
@@ -184,6 +186,71 @@ PREFIX="$HOME/.local" ./install.sh
 ```
 
 A atualização não é automática e preserva seu `.dotfiles`. **`mydotty --att` sincroniza suas configurações; não atualiza o programa.**
+
+## Sincronizar ao atualizar o sistema
+
+No **Arch Linux e CachyOS**, você pode fazer o MyDotty sincronizar suas configurações depois de atualizar os pacotes. Isso funciona tanto com `sudo pacman -Syu` quanto com o **Cachy-Update**, que utiliza o pacman.
+
+### Ativar pela interface — F6
+
+1. Abra `mydotty` com seu usuário normal.
+2. Pressione **F6 — Auto-sync** para consultar o estado.
+3. Se estiver desativado, pressione **Enter** para ativar.
+4. A interface cede o terminal para solicitar sua senha do `sudo`, se necessário, e volta ao MyDotty ao terminar.
+
+![Tela Auto-sync com o estado desativado e instrução para ativar com Enter](docs/images/auto-sync.png)
+
+Para desativar, abra **F6** novamente e confirme com **Enter**. **Esc** cancela sem mudar nada.
+
+Pelo terminal, as ações equivalentes são:
+
+```sh
+mydotty --auto-sync
+mydotty --no-auto-sync
+```
+
+Também é possível instalar e ativar em uma única execução:
+
+```sh
+./install.sh --auto-sync
+```
+
+Execute esses comandos **sem colocar sudo na frente**. O MyDotty pede permissão apenas para criar ou remover o hook do pacman; a sincronização é executada pelo seu usuário.
+
+### Como funciona
+
+Depois de uma transação concluída que atualize pacotes, o hook agenda um timer do systemd do seu usuário. Ele espera **15 segundos** e executa `mydotty --att` em segundo plano. Se outra transação terminar nesse intervalo, a contagem reinicia.
+
+A atualização do sistema não espera o envio dos arquivos terminar. Atualizações individuais e reinstalações de pacotes também podem disparar a sincronização; se não houver uma transação de atualização, o hook não é executado.
+
+É necessário manter sua **sessão aberta** e ter acesso ao Git que funcione sem pedir senha a cada sincronização. Se você usa um agente SSH, ative o auto-sync em uma sessão com o agente disponível. Sem conexão ou em caso de conflito, consulte o resultado e use **F3** para tentar novamente quando resolver a situação.
+
+A integração usa o repositório padrão `~/.dotfiles`. Ela não atualiza o programa MyDotty e não acompanha novos arquivos que você ainda não adicionou.
+
+### Replicar no outro computador
+
+Em outro computador com **Arch Linux ou CachyOS**:
+
+1. Instale a versão atual do MyDotty.
+2. Conecte seu repositório de configurações com **F4** e confira se **F3** funciona.
+3. Abra **F6** e confirme a ativação com **Enter**.
+
+Cada usuário ativa a integração na própria máquina. Não é necessário copiar hooks ou serviços manualmente.
+
+### Consultar o resultado
+
+```sh
+journalctl --user -u mydotty-sync.service -n 30 --no-pager
+```
+
+Os arquivos criados são:
+
+- `~/.config/systemd/user/mydotty-sync.service` e `mydotty-sync.timer` (ou dentro de `XDG_CONFIG_HOME`, se personalizado).
+- `/etc/pacman.d/hooks/zz-mydotty-UID.hook`, onde `UID` é o identificador do seu usuário.
+
+A desativação remove esses arquivos e cancela o timer pendente, mantendo o MyDotty instalado. Uma sincronização que já esteja em andamento pode terminar normalmente.
+
+Referências técnicas: [hooks do pacman](https://man.archlinux.org/man/alpm-hooks.5) e [serviços de usuário via systemctl](https://man.archlinux.org/man/systemctl.1.en).
 
 ## Quando algo não funcionar
 

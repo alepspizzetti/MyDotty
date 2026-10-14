@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -34,7 +37,7 @@ type model struct {
 	repo                           repository
 	state                          snapshot
 	cursor, width, height, offset  int
-	busy, missing                  bool
+	busy, missing, autoSync        bool
 	prompt, input, message, detail string
 	completions                    []string
 	lastCompletion, completionNote string
@@ -94,6 +97,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if m.busy {
+			return m, nil
+		}
+		if m.prompt == "auto-sync" {
+			switch key {
+			case "esc":
+				m.prompt = ""
+			case "enter":
+				binary, err := os.Executable()
+				if err != nil {
+					m.message = err.Error()
+					m.prompt = ""
+					return m, nil
+				}
+				flag, message := "--auto-sync", "Auto-sync ativado para as próximas atualizações do sistema."
+				if m.autoSync {
+					flag, message = "--no-auto-sync", "Auto-sync desativado."
+				}
+				m.prompt, m.busy = "", true
+				var details bytes.Buffer
+				command := exec.Command(binary, flag)
+				command.Stderr = io.MultiWriter(os.Stderr, &details)
+				return m, tea.ExecProcess(command, func(err error) tea.Msg {
+					if err != nil {
+						err = fmt.Errorf("a configuração do auto-sync não foi concluída: %v\n%s", err, strings.TrimSpace(details.String()))
+					}
+					return result{state: m.state, text: message, err: err}
+				})
+			}
 			return m, nil
 		}
 		if m.prompt != "" {
@@ -164,6 +195,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key == "f1" && m.detail == "" {
 			m.detail, m.offset = commandHelp, 0
+			return m, nil
+		}
+		if key == "f6" {
+			m.autoSync, m.prompt = autoSyncEnabled(), "auto-sync"
 			return m, nil
 		}
 		if m.missing {
@@ -289,6 +324,8 @@ mydotty --diff CAMINHO          Enter  Ver alterações
 mydotty --remove CAMINHO        Del  Não acompanhar
 mydotty --apply                 F4  Repetir instalação
 mydotty --help                  F1  Comandos
+mydotty --auto-sync             F6  Ativar auto-sync
+mydotty --no-auto-sync          F6  Desativar auto-sync
 
 CAMINHOS
 Relativos à sua home, ou use ~/ e caminhos absolutos.
@@ -321,13 +358,13 @@ func fileStatus(status string) (string, lipgloss.Style) {
 }
 
 func (m model) help() string {
-	keys := []string{"F2 Adicionar", "F3 Sincronizar", "F4 Conectar", "Enter Ver alterações", "Del Não acompanhar", "F1 Comandos", "F5 Atualizar lista", "Esc Sair"}
+	keys := []string{"F2 Adicionar", "F3 Sincronizar", "F4 Conectar", "F6 Auto-sync", "Enter Ver alterações", "Del Não acompanhar", "F1 Comandos", "F5 Atualizar lista", "Esc Sair"}
 	if m.detail != "" {
 		keys = []string{"↑↓ Rolar", "PgUp/PgDn Página", "Esc Voltar", "q Sair"}
 	} else if m.missing {
-		keys = []string{"F4 Conectar repositório", "F1 Comandos", "Esc Sair"}
+		keys = []string{"F4 Conectar repositório", "F6 Auto-sync", "F1 Comandos", "Esc Sair"}
 	} else if m.state.needsCheckout {
-		keys = []string{"F4 Instalar arquivos", "F1 Comandos", "Esc Sair"}
+		keys = []string{"F4 Instalar arquivos", "F6 Auto-sync", "F1 Comandos", "Esc Sair"}
 	}
 	if m.prompt != "" {
 		keys = []string{"Enter Confirmar", "Esc Cancelar"}
@@ -383,6 +420,13 @@ func (m model) View() string {
 		input := displayPath(m.input)
 		input = ansi.TruncateLeft(input, max(0, ansi.StringWidth(input)-width+6), "…")
 		notice = accent.Render(fit(labels[m.prompt], width)) + "\n" + selection.Render(fit(" › "+input+"▏", width)) + "\n" + muted.Render(fit(m.completionNote, width))
+	}
+	if m.prompt == "auto-sync" {
+		status, action := "DESATIVADO", "ativar"
+		if m.autoSync {
+			status, action = "ATIVADO", "desativar"
+		}
+		notice = accent.Render(fit("AUTO-SYNC · "+status, width)) + "\n" + ink.Render(fit("Sincroniza após atualizações do pacman / Cachy-Update.", width)) + "\n" + muted.Render(fit("Enter para "+action+" · pode solicitar sua senha do sudo", width))
 	}
 	help := m.help()
 	padding := 0
