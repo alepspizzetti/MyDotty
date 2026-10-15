@@ -324,6 +324,70 @@ func TestSyncConflictPreservesLocalAndRemote(t *testing.T) {
 	}
 }
 
+func TestSyncResolvesBinaryAndDeletionConflicts(t *testing.T) {
+	for _, kind := range []string{"binary", "local deletion", "remote deletion"} {
+		for _, keep := range []string{"local", "remote"} {
+			t.Run(kind+"/"+keep, func(t *testing.T) {
+				remote := emptyRemote(t)
+				a := newClient(t, remote)
+				path := "config with space\nand newline"
+				writeFile(t, a.home, path, "original\x00\n")
+				if _, err := a.add(path); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := a.sync(); err != nil {
+					t.Fatal(err)
+				}
+				b := newClient(t, remote)
+				writeFile(t, a.home, path, "remote\x00\n")
+				writeFile(t, b.home, path, "local\x00\n")
+				if kind == "local deletion" {
+					if err := os.Remove(filepath.Join(b.home, path)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if kind == "remote deletion" {
+					if err := os.Remove(filepath.Join(a.home, path)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				writeFile(t, a.home, "remote-only", "compatible\n")
+				if _, err := a.add("remote-only"); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := a.sync(); err != nil {
+					t.Fatal(err)
+				}
+				var out, stderr strings.Builder
+				if code := run([]string{"--repo", b.dir, "--home", b.home, "--att", "--keep", keep}, &out, &stderr); code != 0 {
+					t.Fatalf("CLI failed: %s", stderr.String())
+				}
+				deleted := kind == keep+" deletion"
+				content, err := os.ReadFile(filepath.Join(b.home, path))
+				if deleted {
+					if !os.IsNotExist(err) {
+						t.Fatalf("deletion not kept: %q, %v", content, err)
+					}
+				} else if err != nil || string(content) != keep+"\x00\n" {
+					t.Fatalf("active version: %q, %v", content, err)
+				}
+				if got := mustGit(t, b, "show", "HEAD:remote-only"); got != "compatible\n" {
+					t.Fatalf("compatible change lost: %q", got)
+				}
+				if got := mustGit(t, b, "status", "--porcelain", "--untracked-files=no"); got != "" {
+					t.Fatalf("dirty merge: %q", got)
+				}
+				if _, err := a.sync(); err != nil {
+					t.Fatal(err)
+				}
+				if mustGit(t, a, "rev-parse", "HEAD") != mustGit(t, b, "rev-parse", "HEAD") {
+					t.Fatal("clients did not converge")
+				}
+			})
+		}
+	}
+}
+
 func TestAddCreatesLocalRepositoryAndSyncKeepsOfflineChanges(t *testing.T) {
 	home := t.TempDir()
 	r := repository{filepath.Join(home, ".dotfiles"), home}

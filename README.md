@@ -265,7 +265,7 @@ Referências técnicas: [hooks do pacman](https://man.archlinux.org/man/alpm-hoo
 | O terminal está pequeno | Amplie para pelo menos **60 colunas × 16 linhas** |
 | F2 ou F3 controla brilho ou volume no notebook | Experimente **Fn+F2** ou **Fn+F3** |
 
-A resolução de conflitos ainda não tem um assistente dentro da interface. O MyDotty não faz envio forçado nem escolhe automaticamente qual versão descartar.
+A sincronização combina alterações compatíveis por merge. Em caso de conflito, a interface lista os caminhos e pede qual versão dos arquivos inteiros manter ativa: **L** para esta máquina, **R** para o remoto, ou **Esc** para cancelar. A escolha vale para todos os arquivos em conflito; as duas versões continuam no histórico. No terminal, `mydotty --att` sincroniza direto e, somente se houver conflito, mostra os caminhos e pergunta qual versão manter (**L**, **R** ou **C** para cancelar, seguido de Enter). Para escolher sem interação, use `mydotty --att --keep local` ou `mydotty --att --keep remote`. O auto-sync preserva as versões e informa o conflito para você decidir depois. Outros erros são exibidos sem pedir uma escolha de versão. O MyDotty não faz envio forçado.
 
 ## Detalhes e desenvolvimento
 

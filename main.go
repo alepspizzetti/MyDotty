@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -85,6 +86,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.missing = os.IsNotExist(err)
 		if msg.err != nil {
 			m.message = msg.err.Error()
+			var conflict *syncConflict
+			if errors.As(msg.err, &conflict) {
+				m.prompt = "conflict"
+				m.detail, m.offset = "Escolha a versão para TODOS os arquivos em conflito:\n"+strings.Join(conflict.paths, "\n"), 0
+			}
 		} else {
 			m.message = strings.TrimSpace(msg.text)
 			if m.message == "" {
@@ -97,6 +103,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if m.busy {
+			return m, nil
+		}
+		if m.prompt == "conflict" {
+			switch key {
+			case "up", "down", "pgup", "pgdown":
+				limit := max(0, len(strings.Split(m.detail, "\n"))-m.diffPageSize())
+				switch key {
+				case "up":
+					m.offset = max(0, m.offset-1)
+				case "down":
+					m.offset = min(limit, m.offset+1)
+				case "pgup":
+					m.offset = max(0, m.offset-m.diffPageSize())
+				case "pgdown":
+					m.offset = min(limit, m.offset+m.diffPageSize())
+				}
+			case "esc":
+				m.prompt, m.detail = "", ""
+			case "l", "r":
+				keep := "local"
+				if key == "r" {
+					keep = "remote"
+				}
+				m.prompt, m.detail, m.busy = "", "", true
+				return m, m.perform(func() (string, error) { return m.repo.syncKeeping(keep) })
+			}
 			return m, nil
 		}
 		if m.prompt == "auto-sync" {
@@ -254,7 +286,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.busy = true
-			return m, m.perform(func() (string, error) { return m.repo.git("pull", "--ff-only", "origin", m.state.branch) })
+			return m, m.perform(m.repo.sync)
 		case "i":
 			m.busy = true
 			return m, m.perform(m.repo.apply)
@@ -327,6 +359,12 @@ mydotty --help                  F1  Comandos
 mydotty --auto-sync             F6  Ativar auto-sync
 mydotty --no-auto-sync          F6  Desativar auto-sync
 
+CONFLITOS AO SINCRONIZAR
+L mantém arquivos inteiros desta máquina; R, do remoto.
+Esc cancela. As duas versões continuam no histórico.
+No terminal, --att pergunta quando houver conflito.
+Sem interação: --att --keep local / --att --keep remote.
+
 CAMINHOS
 Relativos à sua home, ou use ~/ e caminhos absolutos.
 Exemplo: mydotty --add .config/kitty
@@ -368,6 +406,9 @@ func (m model) help() string {
 	}
 	if m.prompt != "" {
 		keys = []string{"Enter Confirmar", "Esc Cancelar"}
+		if m.prompt == "conflict" {
+			keys = []string{"L Manter local", "R Manter remoto", "↑↓ Rolar lista", "Esc Cancelar"}
+		}
 		if m.prompt == "add" {
 			keys = append([]string{"Tab Completar caminho"}, keys...)
 		}
@@ -427,6 +468,9 @@ func (m model) View() string {
 			status, action = "ATIVADO", "desativar"
 		}
 		notice = accent.Render(fit("AUTO-SYNC · "+status, width)) + "\n" + ink.Render(fit("Sincroniza após atualizações do pacman / Cachy-Update.", width)) + "\n" + muted.Render(fit("Enter para "+action+" · pode solicitar sua senha do sudo", width))
+	}
+	if m.prompt == "conflict" {
+		notice = accent.Render(fit("CONFLITO · qual versão deve ficar ativa?", width)) + "\n" + ink.Render(fit("L: desta máquina · R: remoto (arquivos inteiros)", width)) + "\n" + muted.Render(fit("Esc cancela e preserva as duas versões no histórico.", width))
 	}
 	help := m.help()
 	padding := 0

@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,6 +27,75 @@ func TestInputPreservesSingleSpacesAndUnicode(t *testing.T) {
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	if next.(model).input != "Atualiza configuraçã" {
 		t.Fatalf("backspace: %q", next.(model).input)
+	}
+}
+
+func TestTUISyncConflictChoice(t *testing.T) {
+	for _, choice := range []string{"l", "r", "esc"} {
+		t.Run(choice, func(t *testing.T) {
+			remote := emptyRemote(t)
+			a := newClient(t, remote)
+			writeFile(t, a.home, "config", "original\n")
+			if _, err := a.add("config"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.sync(); err != nil {
+				t.Fatal(err)
+			}
+			b := newClient(t, remote)
+			writeFile(t, a.home, "config", "remote\n")
+			if _, err := a.sync(); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, b.home, "config", "local\n")
+			m := model{repo: b, width: 80, height: 24}
+			next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyF3})
+			next, _ = next.(model).Update(cmd())
+			m = next.(model)
+			if m.prompt != "conflict" {
+				t.Fatalf("no conflict choice: %q", m.message)
+			}
+			key := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(choice)}
+			if choice == "esc" {
+				key = tea.KeyMsg{Type: tea.KeyEsc}
+			}
+			next, cmd = m.Update(key)
+			if choice == "esc" {
+				if cmd != nil || next.(model).prompt != "" {
+					t.Fatal("cancel did not close prompt")
+				}
+				if got := mustGit(t, b, "show", "HEAD:config"); got != "local\n" {
+					t.Fatal(got)
+				}
+				return
+			}
+			if cmd == nil {
+				t.Fatal("choice did not start synchronization")
+			}
+			res := cmd().(result)
+			if res.err != nil {
+				t.Fatal(res.err)
+			}
+			want := "local\n"
+			if choice == "r" {
+				want = "remote\n"
+			}
+			if got := mustGit(t, b, "show", "HEAD:config"); got != want {
+				t.Fatalf("active config: %q", got)
+			}
+			if got, err := os.ReadFile(filepath.Join(b.home, "config")); err != nil || string(got) != want {
+				t.Fatalf("working config: %q, %v", got, err)
+			}
+			if _, err := a.sync(); err != nil {
+				t.Fatal(err)
+			}
+			if got := mustGit(t, a, "show", "HEAD:config"); got != want {
+				t.Fatalf("other computer: %q", got)
+			}
+			if got := mustGit(t, b, "status", "--porcelain", "--untracked-files=no"); got != "" {
+				t.Fatalf("dirty after merge: %q", got)
+			}
+		})
 	}
 }
 
@@ -63,6 +134,7 @@ func TestLayoutFitsTerminal(t *testing.T) {
 		"commit":    {prompt: "commit", input: "Atualiza configuração"},
 		"clone":     {missing: true, prompt: "clone"},
 		"auto-sync": {prompt: "auto-sync"},
+		"conflict":  {prompt: "conflict", detail: strings.Repeat("config\n", 60)},
 		"diff":      {detail: strings.Repeat("+alteração\n", 60), offset: 500},
 	}
 	for _, size := range [][2]int{{1, 1}, {35, 10}, {59, 15}, {60, 16}, {60, 19}, {60, 20}, {80, 24}, {120, 36}, {160, 48}} {
@@ -83,7 +155,7 @@ func TestLayoutFitsTerminal(t *testing.T) {
 					if !strings.Contains(strings.ToLower(ansi.Strip(output)), "sair") && m.prompt == "" {
 						t.Fatal("quit shortcut is missing")
 					}
-					if m.prompt != "" && m.prompt != "auto-sync" && !strings.Contains(output, "▏") {
+					if m.prompt != "" && m.prompt != "auto-sync" && m.prompt != "conflict" && !strings.Contains(output, "▏") {
 						t.Fatal("input cursor is missing")
 					}
 					if name == "files" && !strings.Contains(output, files[m.cursor].path) {

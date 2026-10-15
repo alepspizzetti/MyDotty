@@ -44,7 +44,7 @@ func TestCLIWorkflowWithoutTerminal(t *testing.T) {
 }
 
 func TestCLIRejectsAmbiguousActionsAndDocumentsCommands(t *testing.T) {
-	for _, args := range [][]string{{"--add", "x", "--att"}, {"--auto-sync", "--att"}, {"unexpected"}, {"--add", ""}} {
+	for _, args := range [][]string{{"--add", "x", "--att"}, {"--auto-sync", "--att"}, {"unexpected"}, {"--add", ""}, {"--keep", "local"}, {"--att", "--keep", "invalid"}} {
 		var out, stderr bytes.Buffer
 		if code := run(args, &out, &stderr); code == 0 {
 			t.Fatalf("accepted %v", args)
@@ -57,6 +57,80 @@ func TestCLIRejectsAmbiguousActionsAndDocumentsCommands(t *testing.T) {
 	for _, action := range []string{"-init", "-add", "-att", "-sync", "-status", "-diff", "-remove", "-apply", "-auto-sync", "-no-auto-sync"} {
 		if !strings.Contains(stderr.String(), action) {
 			t.Fatalf("help omits %s", action)
+		}
+	}
+}
+
+func TestCLIAsksAfterSyncConflict(t *testing.T) {
+	for _, answer := range []string{"l\n", "r\n", "x\nr\n", "c\n", "", "background"} {
+		t.Run(strings.TrimSpace(answer), func(t *testing.T) {
+			remote := emptyRemote(t)
+			a := newClient(t, remote)
+			writeFile(t, a.home, "config", "original\n")
+			if _, err := a.add("config"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.sync(); err != nil {
+				t.Fatal(err)
+			}
+			b := newClient(t, remote)
+			writeFile(t, a.home, "config", "remote\n")
+			if _, err := a.sync(); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, b.home, "config", "local\n")
+			var out, stderr bytes.Buffer
+			args := []string{"--repo", b.dir, "--home", b.home, "--att"}
+			if answer == "background" {
+				if code := runWithInput(args, nil, &out, &stderr); code != 1 || strings.Contains(stderr.String(), "Qual versão") {
+					t.Fatalf("noninteractive conflict: %d, %s", code, stderr.String())
+				}
+				if got := mustGit(t, b, "show", "HEAD:config"); got != "local\n" {
+					t.Fatalf("local version lost: %q", got)
+				}
+				return
+			}
+			code := runWithInput(args, strings.NewReader(answer), &out, &stderr)
+			if !strings.Contains(stderr.String(), "Qual versão") || !strings.Contains(stderr.String(), "config") {
+				t.Fatalf("no conflict prompt: %s", stderr.String())
+			}
+			want := "local\n"
+			if strings.Contains(answer, "r") {
+				want = "remote\n"
+			}
+			cancel := answer == "c\n" || answer == ""
+			if (code == 0) == cancel {
+				t.Fatalf("exit code: %d", code)
+			}
+			got, err := os.ReadFile(filepath.Join(b.home, "config"))
+			if err != nil || string(got) != want {
+				t.Fatalf("active config: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestCLIOnlyAsksForConflicts(t *testing.T) {
+	r := newClient(t, emptyRemote(t))
+	writeFile(t, r.home, "config", "local\n")
+	if _, err := r.add("config"); err != nil {
+		t.Fatal(err)
+	}
+	for _, offline := range []bool{false, true} {
+		if offline {
+			mustGit(t, r, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing.git"))
+		}
+		input := strings.NewReader("r\n")
+		var out, stderr bytes.Buffer
+		code := runWithInput([]string{"--repo", r.dir, "--home", r.home, "--att"}, input, &out, &stderr)
+		if (code == 0) == offline {
+			t.Fatalf("offline=%v, code=%d: %s", offline, code, stderr.String())
+		}
+		if input.Len() != 2 || strings.Contains(stderr.String(), "Qual versão") {
+			t.Fatal("asked without conflict")
+		}
+		if offline && !strings.Contains(stderr.String(), "baixar") {
+			t.Fatalf("missing connection error: %s", stderr.String())
 		}
 	}
 }

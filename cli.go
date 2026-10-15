@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,9 +12,18 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 )
 
 func run(args []string, out, stderr io.Writer) int {
+	var input io.Reader
+	if term.IsTerminal(os.Stdin.Fd()) {
+		input = os.Stdin
+	}
+	return runWithInput(args, input, out, stderr)
+}
+
+func runWithInput(args []string, input io.Reader, out, stderr io.Writer) int {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -28,6 +39,7 @@ func run(args []string, out, stderr io.Writer) int {
 	diff := flags.String("diff", "", "ver alterações de um arquivo: --diff CAMINHO")
 	att := flags.Bool("att", false, "salvar, baixar e enviar todas as alterações acompanhadas")
 	flags.BoolVar(att, "sync", false, "sinônimo de --att")
+	keep := flags.String("keep", "", "com --att, resolver conflitos mantendo arquivos inteiros: local ou remote")
 	status := flags.Bool("status", false, "listar arquivos acompanhados e suas alterações")
 	autoEnable := flags.Bool("auto-sync", false, "ativar sincronização após atualizações do pacman (Arch/CachyOS)")
 	autoDisable := flags.Bool("no-auto-sync", false, "desativar a sincronização automática")
@@ -52,6 +64,10 @@ func run(args []string, out, stderr io.Writer) int {
 	})
 	if flags.NArg() != 0 || actions > 1 {
 		fmt.Fprintln(stderr, "Escolha uma ação por vez. Use mydotty --help para ver exemplos.")
+		return 2
+	}
+	if *keep != "" && (!*att || (*keep != "local" && *keep != "remote")) {
+		fmt.Fprintln(stderr, "Use --keep local ou --keep remote junto com --att / --sync.")
 		return 2
 	}
 	if *autoEnable || *autoDisable {
@@ -95,7 +111,36 @@ func run(args []string, out, stderr io.Writer) int {
 				text, err = r.diff(*diff)
 			}
 		case *att:
-			text, err = r.sync()
+			text, err = r.syncKeeping(*keep)
+			var conflict *syncConflict
+			if *keep == "" && input != nil && errors.As(err, &conflict) {
+				fmt.Fprintln(stderr, safe(err.Error()))
+				scanner := bufio.NewScanner(input)
+				for {
+					fmt.Fprint(stderr, "Qual versão manter em TODOS os arquivos em conflito? [L] Local / [R] Remoto / [C] Cancelar: ")
+					if !scanner.Scan() {
+						if scanErr := scanner.Err(); scanErr != nil {
+							fmt.Fprintln(stderr, safe(scanErr.Error()))
+						}
+						return 1
+					}
+					choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
+					switch choice {
+					case "l", "local":
+						choice = "local"
+					case "r", "remote", "remoto":
+						choice = "remote"
+					case "", "c", "cancelar":
+						fmt.Fprintln(stderr, "Cancelado. As duas versões foram preservadas.")
+						return 1
+					default:
+						fmt.Fprintln(stderr, "Digite L, R ou C e pressione Enter.")
+						continue
+					}
+					text, err = r.syncKeeping(choice)
+					break
+				}
+			}
 		case *apply:
 			text, err = r.apply()
 		case *status:

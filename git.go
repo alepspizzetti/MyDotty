@@ -308,7 +308,15 @@ func (r repository) remove(path string) (string, error) {
 	return "Deixei de acompanhar esse caminho. Os arquivos continuam nesta máquina. Sincronize para atualizar o repositório.", nil
 }
 
-func (r repository) sync() (string, error) {
+type syncConflict struct{ paths []string }
+
+func (c *syncConflict) Error() string {
+	return "Não consegui combinar as versões. Suas alterações locais foram preservadas.\nArquivos: " + strings.Join(c.paths, ", ") + "\nEscolha com --att no terminal ou F3 na interface. Sem interação, use --att --keep local / --att --keep remote."
+}
+
+func (r repository) sync() (string, error) { return r.syncKeeping("") }
+
+func (r repository) syncKeeping(keep string) (string, error) {
 	if err := r.ensure(); err != nil {
 		return "", err
 	}
@@ -352,17 +360,25 @@ func (r repository) sync() (string, error) {
 			if _, err := r.apply(); err != nil {
 				return "", err
 			}
-		} else if _, err := r.git("rebase", remoteRef); err != nil {
-			conflicts, _ := r.git("diff", "--name-only", "--diff-filter=U")
-			for _, directory := range []string{"rebase-merge", "rebase-apply"} {
-				if _, statErr := os.Stat(filepath.Join(r.dir, directory)); statErr == nil {
-					if _, abortErr := r.git("rebase", "--abort"); abortErr != nil {
-						return "", fmt.Errorf("sincronização interrompida; não consegui desfazer a integração: %w", abortErr)
-					}
-					break
+		} else if _, err := r.git("merge", "--no-edit", remoteRef); err != nil {
+			conflicts, listErr := r.git("diff", "--name-only", "--diff-filter=U", "-z")
+			mergeErr := err
+			if listErr == nil && conflicts != "" {
+				paths := strings.Split(strings.TrimSuffix(conflicts, "\x00"), "\x00")
+				if keep == "" {
+					mergeErr = &syncConflict{paths: paths}
+				} else {
+					mergeErr = r.resolveConflicts(paths, keep)
 				}
 			}
-			return "", fmt.Errorf("não consegui combinar as versões. Suas alterações locais foram preservadas.\nArquivos: %s\n%w", strings.TrimSpace(conflicts), err)
+			if mergeErr != nil {
+				if _, statErr := os.Stat(filepath.Join(r.dir, "MERGE_HEAD")); statErr == nil {
+					if _, abortErr := r.git("merge", "--abort"); abortErr != nil {
+						return "", fmt.Errorf("sincronização interrompida; não consegui desfazer a integração: %w", abortErr)
+					}
+				}
+				return "", mergeErr
+			}
 		}
 	} else if headErr != nil {
 		return "Nenhum arquivo para sincronizar. Use Adicionar (F2 ou --add) primeiro.", nil
@@ -371,4 +387,32 @@ func (r repository) sync() (string, error) {
 		return "", fmt.Errorf("suas alterações foram salvas nesta máquina, mas não consegui enviá-las. Tente sincronizar novamente.\n%w", err)
 	}
 	return "Tudo sincronizado! Suas configurações estão salvas e atualizadas.", nil
+}
+
+func (r repository) resolveConflicts(paths []string, keep string) error {
+	stage := "--ours"
+	ref := "HEAD"
+	if keep == "remote" {
+		stage, ref = "--theirs", "MERGE_HEAD"
+	}
+	for _, path := range paths {
+		entries, err := r.git("ls-tree", "-z", ref, "--", path)
+		if err != nil {
+			return err
+		}
+		if entries == "" {
+			if _, err := r.git("rm", "--", path); err != nil {
+				return err
+			}
+		} else {
+			if _, err := r.git("checkout", stage, "--", path); err != nil {
+				return err
+			}
+			if _, err := r.git("add", "--", path); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := r.git("commit", "--no-edit")
+	return err
 }
