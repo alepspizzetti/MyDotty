@@ -30,6 +30,24 @@ func TestInputPreservesSingleSpacesAndUnicode(t *testing.T) {
 	}
 }
 
+func TestTUIAddUploadsImmediately(t *testing.T) {
+	remote := emptyRemote(t)
+	r := newClient(t, remote)
+	writeFile(t, r.home, "config", "added from F2\n")
+	m := model{repo: r, prompt: "add", input: "config", width: 80, height: 24}
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || !next.(model).busy {
+		t.Fatal("add did not start")
+	}
+	next, _ = next.(model).Update(cmd())
+	if !strings.Contains(next.(model).message, "Tudo sincronizado") {
+		t.Fatal(next.(model).message)
+	}
+	if got, err := runGit(r.home, "--git-dir="+remote, "show", "HEAD:config"); err != nil || got != "added from F2\n" {
+		t.Fatalf("F2 did not upload: %q, %v", got, err)
+	}
+}
+
 func TestTUISyncConflictChoice(t *testing.T) {
 	for _, choice := range []string{"l", "r", "esc"} {
 		t.Run(choice, func(t *testing.T) {
@@ -133,7 +151,8 @@ func TestLayoutFitsTerminal(t *testing.T) {
 		"add":       {prompt: "add", input: strings.Repeat("configuração/", 30)},
 		"commit":    {prompt: "commit", input: "Atualiza configuração"},
 		"clone":     {missing: true, prompt: "clone"},
-		"auto-sync": {prompt: "auto-sync"},
+		"settings":  {settingsOpen: true},
+		"settings2": {settingsOpen: true, settingsCursor: 3, message: strings.Repeat("erro longo", 40) + "\nsegunda linha"},
 		"conflict":  {prompt: "conflict", detail: strings.Repeat("config\n", 60)},
 		"diff":      {detail: strings.Repeat("+alteração\n", 60), offset: 500},
 	}
@@ -155,7 +174,7 @@ func TestLayoutFitsTerminal(t *testing.T) {
 					if !strings.Contains(strings.ToLower(ansi.Strip(output)), "sair") && m.prompt == "" {
 						t.Fatal("quit shortcut is missing")
 					}
-					if m.prompt != "" && m.prompt != "auto-sync" && m.prompt != "conflict" && !strings.Contains(output, "▏") {
+					if m.prompt != "" && m.prompt != "conflict" && !strings.Contains(output, "▏") {
 						t.Fatal("input cursor is missing")
 					}
 					if name == "files" && !strings.Contains(output, files[m.cursor].path) {

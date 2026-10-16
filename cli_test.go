@@ -27,7 +27,7 @@ func TestCLIWorkflowWithoutTerminal(t *testing.T) {
 	}
 	writeFile(t, home, ".config/app/config com espaço", "initial\n")
 	invoke("--add", ".config/app")
-	if text := invoke("--status"); !strings.Contains(text, "novo") {
+	if text := invoke("--status"); !strings.Contains(text, "salvo") {
 		t.Fatalf("status: %s", text)
 	}
 	invoke("--att")
@@ -54,10 +54,39 @@ func TestCLIRejectsAmbiguousActionsAndDocumentsCommands(t *testing.T) {
 	if code := run([]string{"--help"}, &out, &stderr); code != 0 {
 		t.Fatal(code)
 	}
-	for _, action := range []string{"-init", "-add", "-att", "-sync", "-status", "-diff", "-remove", "-apply", "-auto-sync", "-no-auto-sync"} {
+	for _, action := range []string{"-init", "-add", "-att", "-sync", "-status", "-diff", "-remove", "-apply", "-auto-sync", "-no-auto-sync", "-settings", "-set", "-update"} {
 		if !strings.Contains(stderr.String(), action) {
 			t.Fatalf("help omits %s", action)
 		}
+	}
+}
+
+func TestAddUploadsImmediatelyAndKeepsOfflineCommit(t *testing.T) {
+	remote := emptyRemote(t)
+	r := newClient(t, remote)
+	var out, stderr bytes.Buffer
+	invoke := func(path string) int {
+		t.Helper()
+		return run([]string{"--repo", r.dir, "--home", r.home, "--add", path}, &out, &stderr)
+	}
+	writeFile(t, r.home, ".config/app/config", "uploaded by add\n")
+	if code := invoke(".config/app"); code != 0 {
+		t.Fatal(stderr.String())
+	}
+	if got, err := runGit(r.home, "--git-dir="+remote, "show", "HEAD:.config/app/config"); err != nil || got != "uploaded by add\n" {
+		t.Fatalf("--add did not upload: %q, %v", got, err)
+	}
+	mustGit(t, r, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing.git"))
+	writeFile(t, r.home, "offline", "saved offline\n")
+	if code := invoke("offline"); code == 0 || !strings.Contains(stderr.String(), "salvas nesta máquina") {
+		t.Fatalf("missing offline notification: %s", stderr.String())
+	}
+	if got := mustGit(t, r, "show", "HEAD:offline"); got != "saved offline\n" {
+		t.Fatalf("offline addition not committed: %q", got)
+	}
+	mustGit(t, r, "remote", "set-url", "origin", remote)
+	if _, err := r.sync(); err != nil {
+		t.Fatal(err)
 	}
 }
 

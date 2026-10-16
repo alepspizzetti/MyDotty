@@ -4,8 +4,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
+
+func TestOverlappingSyncTriggers(t *testing.T) {
+	r := newClient(t, emptyRemote(t))
+	writeFile(t, r.home, "config", "initial\n")
+	if _, err := r.addAndSync("config", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, r.home, "config", "overlapping triggers\n")
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := r.sync(); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := mustGit(t, r, "show", "refs/remotes/origin/main:config"); got != "overlapping triggers\n" {
+		t.Fatalf("changes not uploaded: %q", got)
+	}
+}
 
 func fixture(t *testing.T) repository {
 	t.Helper()
@@ -321,6 +346,92 @@ func TestSyncConflictPreservesLocalAndRemote(t *testing.T) {
 	}
 	if _, err := b.read(); err != nil {
 		t.Fatal("repository left in interrupted rebase:", err)
+	}
+}
+
+func TestSyncAcceptsOnlyOlderUntrackedFiles(t *testing.T) {
+	for _, scenario := range []string{"older", "equal", "newer", "blocked", "conflict"} {
+		t.Run(scenario, func(t *testing.T) {
+			remote := emptyRemote(t)
+			a := newClient(t, remote)
+			writeFile(t, a.home, "config", "original\n")
+			if _, err := a.add("config"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.sync(); err != nil {
+				t.Fatal(err)
+			}
+			b := newClient(t, remote)
+			path := ".config/app/config with space\nand newline"
+			writeFile(t, a.home, path, "remote\n")
+			if _, err := a.add(path); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "blocked" {
+				writeFile(t, a.home, "blocked", "remote\n")
+				if _, err := a.add("blocked"); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, b.home, "blocked", "local\n")
+				future := time.Now().Add(time.Hour)
+				if err := os.Chtimes(filepath.Join(b.home, "blocked"), future, future); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "conflict" {
+				writeFile(t, a.home, "config", "remote edit\n")
+				writeFile(t, b.home, "config", "local edit\n")
+			}
+			if _, err := a.sync(); err != nil {
+				t.Fatal(err)
+			}
+			stamp := strings.TrimSpace(mustGit(t, a, "log", "-1", "--format=%cI", "--", path))
+			remoteTime, err := time.Parse(time.RFC3339, stamp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			localTime := remoteTime.Add(-time.Hour)
+			if scenario == "equal" {
+				localTime = remoteTime
+			}
+			if scenario == "newer" {
+				localTime = remoteTime.Add(time.Hour)
+			}
+			writeFile(t, b.home, path, "local\n")
+			if err := os.Chtimes(filepath.Join(b.home, path), localTime, localTime); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, b.home, "private", "not selected\n")
+			_, err = b.sync()
+			want := "local\n"
+			if scenario == "older" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				want = "remote\n"
+				if got := mustGit(t, b, "show", "HEAD:"+path); got != want {
+					t.Fatalf("remote not installed: %q", got)
+				}
+			} else if err == nil {
+				t.Fatal("expected blocked merge")
+			}
+			if got, err := os.ReadFile(filepath.Join(b.home, path)); err != nil || string(got) != want {
+				t.Fatalf("content: %q, %v", got, err)
+			}
+			info, err := os.Stat(filepath.Join(b.home, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario != "older" && !info.ModTime().Equal(localTime) {
+				t.Fatal("local timestamp changed")
+			}
+			if got := mustGit(t, b, "ls-files"); strings.Contains(got, "private") {
+				t.Fatal("tracked an unselected file")
+			}
+			if got := mustGit(t, b, "status", "--porcelain", "--untracked-files=no"); got != "" {
+				t.Fatalf("dirty repository: %q", got)
+			}
+		})
 	}
 }
 

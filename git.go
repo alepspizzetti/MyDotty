@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -132,6 +134,17 @@ func (r repository) add(path string) (string, error) {
 		return "", err
 	}
 	return "Adicionado. Use Sincronizar (F3 ou --att) para salvar e enviar.", nil
+}
+
+func (r repository) addAndSync(path, keep string) (string, error) {
+	if _, err := r.add(path); err != nil {
+		return "", err
+	}
+	text, err := r.syncKeeping(keep)
+	if err != nil {
+		return "", fmt.Errorf("o caminho foi adicionado; a sincronização não foi concluída: %w", err)
+	}
+	return "Adicionado. " + text, nil
 }
 
 func (r repository) diff(path string) (string, error) {
@@ -320,12 +333,19 @@ func (r repository) syncKeeping(keep string) (string, error) {
 	if err := r.ensure(); err != nil {
 		return "", err
 	}
-	state, err := r.read()
+	// Package and session triggers may overlap; serialize changes to this work tree.
+	lock, err := os.OpenFile(filepath.Join(r.dir, "mydotty-sync.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return "", err
 	}
-	if state.remote == "" {
-		return "", fmt.Errorf("primeiro conecte seu repositório: F4 ou mydotty --init URL")
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return "", err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	state, err := r.read()
+	if err != nil {
+		return "", err
 	}
 	unmerged, err := r.git("ls-files", "--unmerged")
 	if err != nil {
@@ -346,6 +366,9 @@ func (r repository) syncKeeping(keep string) (string, error) {
 			return "", err
 		}
 	}
+	if state.remote == "" {
+		return "", fmt.Errorf("suas alterações estão salvas nesta máquina; conecte seu repositório: F4 ou mydotty --init URL")
+	}
 	if _, err := r.git("fetch", "origin"); err != nil {
 		return "", fmt.Errorf("não consegui baixar as novidades. Suas alterações estão salvas nesta máquina; tente sincronizar novamente.\n%w", err)
 	}
@@ -360,25 +383,8 @@ func (r repository) syncKeeping(keep string) (string, error) {
 			if _, err := r.apply(); err != nil {
 				return "", err
 			}
-		} else if _, err := r.git("merge", "--no-edit", remoteRef); err != nil {
-			conflicts, listErr := r.git("diff", "--name-only", "--diff-filter=U", "-z")
-			mergeErr := err
-			if listErr == nil && conflicts != "" {
-				paths := strings.Split(strings.TrimSuffix(conflicts, "\x00"), "\x00")
-				if keep == "" {
-					mergeErr = &syncConflict{paths: paths}
-				} else {
-					mergeErr = r.resolveConflicts(paths, keep)
-				}
-			}
-			if mergeErr != nil {
-				if _, statErr := os.Stat(filepath.Join(r.dir, "MERGE_HEAD")); statErr == nil {
-					if _, abortErr := r.git("merge", "--abort"); abortErr != nil {
-						return "", fmt.Errorf("sincronização interrompida; não consegui desfazer a integração: %w", abortErr)
-					}
-				}
-				return "", mergeErr
-			}
+		} else if err := r.mergeKeeping(remoteRef, keep); err != nil {
+			return "", err
 		}
 	} else if headErr != nil {
 		return "Nenhum arquivo para sincronizar. Use Adicionar (F2 ou --add) primeiro.", nil
@@ -387,6 +393,97 @@ func (r repository) syncKeeping(keep string) (string, error) {
 		return "", fmt.Errorf("suas alterações foram salvas nesta máquina, mas não consegui enviá-las. Tente sincronizar novamente.\n%w", err)
 	}
 	return "Tudo sincronizado! Suas configurações estão salvas e atualizadas.", nil
+}
+
+// Only incoming additions can collide with files not yet tracked on this machine.
+// Keep backups until the merge succeeds, including conflict resolution.
+func (r repository) mergeKeeping(remoteRef, keep string) (err error) {
+	backups := map[string]string{}
+	defer func() {
+		merged := err == nil
+		for path, backup := range backups {
+			var cleanupErr error
+			if merged {
+				cleanupErr = os.Remove(backup)
+			} else if _, statErr := os.Stat(filepath.Join(r.dir, "MERGE_HEAD")); statErr == nil {
+				cleanupErr = fmt.Errorf("merge ainda pendente; arquivo local preservado em %s", backup)
+			} else {
+				cleanupErr = os.Rename(backup, path)
+			}
+			if cleanupErr != nil {
+				err = fmt.Errorf("%v; não consegui finalizar o backup %s: %w", err, backup, cleanupErr)
+			}
+		}
+	}()
+	added, err := r.git("diff", "--name-only", "--diff-filter=A", "-z", "HEAD..."+remoteRef)
+	if err != nil {
+		return err
+	}
+	paths := strings.Split(strings.TrimSuffix(added, "\x00"), "\x00")
+	if added != "" {
+		untracked, err := r.git(append([]string{"ls-files", "--others", "-z", "--"}, paths...)...)
+		if err != nil {
+			return err
+		}
+		for _, path := range strings.Split(untracked, "\x00") {
+			if path == "" || !slices.Contains(paths, path) {
+				continue
+			}
+			full := filepath.Join(r.home, path)
+			info, err := os.Lstat(full)
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			stamp, err := r.git("log", "-1", "--format=%cI", remoteRef, "--", path)
+			if err != nil {
+				return err
+			}
+			remoteTime, err := time.Parse(time.RFC3339, strings.TrimSpace(stamp))
+			if err != nil {
+				return err
+			}
+			if !info.ModTime().Before(remoteTime) {
+				continue
+			}
+			backup, err := os.CreateTemp(filepath.Dir(full), ".mydotty-backup-*")
+			if err != nil {
+				return err
+			}
+			if err := backup.Close(); err != nil {
+				os.Remove(backup.Name())
+				return err
+			}
+			if err := os.Rename(full, backup.Name()); err != nil {
+				os.Remove(backup.Name())
+				return err
+			}
+			backups[full] = backup.Name()
+		}
+	}
+	if _, err := r.git("merge", "--no-edit", remoteRef); err != nil {
+		conflicts, listErr := r.git("diff", "--name-only", "--diff-filter=U", "-z")
+		mergeErr := err
+		if listErr == nil && conflicts != "" {
+			paths := strings.Split(strings.TrimSuffix(conflicts, "\x00"), "\x00")
+			if keep == "" {
+				mergeErr = &syncConflict{paths: paths}
+			} else {
+				mergeErr = r.resolveConflicts(paths, keep)
+			}
+		}
+		if mergeErr != nil {
+			if _, statErr := os.Stat(filepath.Join(r.dir, "MERGE_HEAD")); statErr == nil {
+				if _, abortErr := r.git("merge", "--abort"); abortErr != nil {
+					return fmt.Errorf("sincronização interrompida; não consegui desfazer a integração: %w", abortErr)
+				}
+			}
+			return mergeErr
+		}
+	}
+	return nil
 }
 
 func (r repository) resolveConflicts(paths []string, keep string) error {

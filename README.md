@@ -10,7 +10,7 @@ Os arquivos continuam onde seus aplicativos esperam encontrá-los. O histórico 
 
 *Capturas geradas a partir da interface do MyDotty, com caminhos e repositório de exemplo.*
 
-[Instalar](#instalação) · [Primeiro uso com imagens](#primeiro-uso-passo-a-passo) · [Comandos](#comandos-e-atalhos) · [Outro computador](#usar-em-outro-computador) · [Atualizar](#atualizar-o-mydotty) · [Auto-sync](#sincronizar-ao-atualizar-o-sistema) · [Ajuda](#quando-algo-não-funcionar)
+[Instalar](#instalação) · [Primeiro uso com imagens](#primeiro-uso-passo-a-passo) · [Comandos](#comandos-e-atalhos) · [Outro computador](#usar-em-outro-computador) · [Atualizar](#atualizar-o-mydotty) · [Configurações](#configurações) · [Ajuda](#quando-algo-não-funcionar)
 
 ## Instalação
 
@@ -22,24 +22,24 @@ cd MyDotty
 ./install.sh
 ```
 
-O script compila o programa para sua máquina e instala `mydotty` em `/usr/local/bin`. Se precisar de permissão, solicita `sudo` durante a instalação. Depois, você pode chamar o comando de qualquer pasta:
+O script compila e instala `mydotty` em `~/.local/bin`, configura o PATH de Bash, Zsh ou Fish e tenta ativar a atualização automática diária. Na primeira instalação, basta executar `./install.sh` em cada PC e abrir um novo terminal para chamar o comando de qualquer pasta:
 
 ```sh
 mydotty
 ```
 
-O Go é necessário para compilar; o programa instalado precisa apenas do Git. Sem Go, o instalador só funciona se já houver um executável `mydotty` compatível ao lado do script. O clone deste repositório não inclui esse executável.
+O Go é necessário para compilar e para usar a atualização automática; para sincronizar dotfiles, o programa instalado precisa apenas do Git. Sem Go, o instalador só funciona se já houver um executável `mydotty` compatível ao lado do script. O clone deste repositório não inclui esse executável.
 
 <details>
-<summary>Instalar somente para meu usuário, sem sudo</summary>
+<summary>Escolher outro diretório de instalação</summary>
 
-Dentro da pasta do projeto, execute:
+A instalação por usuário é o padrão. Para instalar globalmente, por exemplo:
 
 ```sh
-PREFIX="$HOME/.local" ./install.sh
+PREFIX=/usr/local ./install.sh
 ```
 
-A instalação será em `~/.local/bin`. Essa pasta precisa estar no `PATH` do seu shell; o instalador avisa quando ela não está.
+O instalador pode pedir sudo para copiar o executável nesse destino. Se a pasta não for gravável pelo usuário, a atualização automática ficará pendente. O instalador informa a causa sem desfazer a instalação.
 
 </details>
 
@@ -70,7 +70,7 @@ Pressione **F2** e informe um arquivo ou uma pasta. Exemplos:
 .config/nvim
 ```
 
-Use **Tab** para completar o caminho. Na captura abaixo, digitar `.config/ki` e pressionar Tab completou `.config/kitty/`. Confirme com **Enter** para adicionar a pasta.
+Use **Tab** para completar o caminho. Na captura abaixo, digitar `.config/ki` e pressionar Tab completou `.config/kitty/`. Confirme com **Enter** para adicionar, salvar e enviar a pasta ao seu repositório. Não é necessário usar F3 em seguida.
 
 ![Campo Adicionar com o caminho .config/kitty/ preenchido por autocomplete e as teclas Tab, Enter e Esc visíveis](docs/images/adicionar.png)
 
@@ -81,16 +81,18 @@ Os caminhos relativos começam na **sua home**, mesmo que você abra o MyDotty e
 | **Tab** | Completa o trecho comum ou a única opção encontrada |
 | **Tab** novamente | Percorre as opções disponíveis |
 | **Shift+Tab** | Percorre as opções anteriores |
-| **Enter** | Adiciona o caminho preenchido |
+| **Enter** | Adiciona, salva e sincroniza o caminho preenchido |
 | **Esc** | Cancela a entrada |
 
 Espaços, acentos e arquivos ocultos são aceitos. **Dentro da interface, digite caminhos com espaços sem aspas.** O autocomplete é do MyDotty e funciona independentemente do shell; ele não carrega plugins ou sugestões personalizados do Bash, Zsh ou Fish.
+
+Se o envio falhar por falta de conexão, a adição fica salva em um commit local; use F3 ou `--att` quando a conexão voltar. Sem um remoto configurado, o MyDotty salva localmente e orienta conectar o repositório com F4 ou `--init`.
 
 Adicionar uma pasta inclui seus arquivos atuais. Para incluir arquivos novos criados nela depois, adicione a pasta novamente. O MyDotty não acompanha automaticamente todos os arquivos da sua home.
 
 ### 3. Confira o que mudou — Enter
 
-Na lista, use **↑/↓** para selecionar um arquivo e **Enter** para abrir suas diferenças. Linhas vermelhas mostram o que foi removido; linhas verdes mostram o que foi adicionado. Pressione **Esc** para voltar.
+Depois de editar uma configuração, use **↑/↓** na lista para selecionar um arquivo e **Enter** para abrir suas diferenças. Linhas vermelhas mostram o que foi removido; linhas verdes mostram o que foi adicionado. Pressione **Esc** para voltar.
 
 ![Tela de diferenças mostrando a troca de font_size 12 por font_size 14, com remoção em vermelho e adição em verde](docs/images/diferencas.png)
 
@@ -127,15 +129,18 @@ Prefere ficar no shell? As mesmas ações estão disponíveis sem abrir a interf
 | --- | --- | --- |
 | `mydotty` | — | Abrir a interface |
 | `mydotty --init URL` | **F4** | Conectar seu repositório e preparar o `.dotfiles` |
-| `mydotty --add CAMINHO` | **F2** | Adicionar um arquivo ou pasta |
+| `mydotty --add CAMINHO` | **F2** | Adicionar, salvar e sincronizar um arquivo ou pasta |
 | `mydotty --att` ou `mydotty --sync` | **F3** | Salvar, baixar e enviar alterações |
 | `mydotty --status` | **F5** | Consultar os arquivos; na interface, atualizar a lista |
 | `mydotty --diff CAMINHO` | **Enter** | Ver alterações do arquivo selecionado |
 | `mydotty --remove CAMINHO` | **Del** | Parar de acompanhar, mantendo os arquivos locais |
 | `mydotty --apply` | **F4**, se a instalação estiver pendente | Repetir a instalação após mover caminhos existentes |
 | `mydotty --help` | **F1** | Consultar comandos e instruções |
-| `mydotty --auto-sync` | **F6** → Enter | Ativar sincronização após atualizações do pacman |
-| `mydotty --no-auto-sync` | **F6** → Enter, se ativado | Desativar a sincronização automática |
+| `mydotty --settings` | **F6** ou **Tab** | Abrir a aba Configurações |
+| `mydotty --set login=true` | **↑/↓** e **Espaço/Enter** na aba | Ativar uma opção; use `false` para desativar |
+| `mydotty --auto-sync` | Opção Atualização de pacotes | Ativar sincronização após atualizações do pacman |
+| `mydotty --no-auto-sync` | Opção Atualização de pacotes | Desativar somente a sincronização após pacman |
+| `mydotty --update` | — | Atualizar o programa manualmente |
 
 **Esc** cancela entradas e fecha diferenças; na tela principal, sai do programa. **Ctrl+C** também encerra. Na interface, **Del** abre uma confirmação antes de parar de acompanhar o arquivo. Depois, sincronize para registrar essa retirada no repositório.
 
@@ -146,7 +151,6 @@ Exemplo de primeiro uso pelo terminal:
 mydotty --init git@github.com:voce/dotfiles.git
 mydotty --add .config/kitty
 mydotty --add .zshrc
-mydotty --att
 ```
 
 No shell, use aspas para caminhos com espaços:
@@ -178,86 +182,93 @@ git pull
 ./install.sh
 ```
 
-Isso atualiza o código e substitui o executável global. Se você instalou somente para seu usuário, repita o mesmo destino:
+Isso atualiza o código e substitui o executável em `~/.local/bin`. Se você escolheu outro `PREFIX`, repita esse destino ao reinstalar, por exemplo `PREFIX=/usr/local ./install.sh`.
 
-```sh
-git pull
-PREFIX="$HOME/.local" ./install.sh
+Na primeira instalação, o instalador tenta ativar **Auto update** automaticamente. A reinstalação preserva a preferência de quem desativou essa opção. Você também pode alterá-la na aba Configurações. A atualização do programa preserva seu `.dotfiles`. **`mydotty --att` sincroniza suas configurações; não atualiza o programa.**
+
+## Configurações
+
+Abra **F6**, **Tab** na tela principal, ou `mydotty --settings`. Use **↑/↓** para selecionar e **Espaço** ou **Enter** para ativar/desativar. Cada alteração é aplicada e salva imediatamente. **Tab** ou **Esc** volta à lista de arquivos.
+
+```text
+AUTO-SYNC
+[x] Atualização de pacotes
+[x] Início de sessão
+[x] Encerramento de sessão
+
+AUTO UPDATE · MyDotty
+[x] Ativo
 ```
 
-A atualização não é automática e preserva seu `.dotfiles`. **`mydotty --att` sincroniza suas configurações; não atualiza o programa.**
+As três opções de auto-sync são independentes: você pode deixar todas ativas. Auto update é uma quarta opção, separada da sincronização dos dotfiles. Cada linha mostra uma explicação ao ser selecionada. As opções ficam em `~/.config/mydotty/config.json` (ou no diretório definido por `XDG_CONFIG_HOME`) e são específicas de cada máquina.
 
-## Sincronizar ao atualizar o sistema
-
-No **Arch Linux e CachyOS**, você pode fazer o MyDotty sincronizar suas configurações depois de atualizar os pacotes. Isso funciona tanto com `sudo pacman -Syu` quanto com o **Cachy-Update**, que utiliza o pacman.
-
-### Ativar pela interface — F6
-
-1. Abra `mydotty` com seu usuário normal.
-2. Pressione **F6 — Auto-sync** para consultar o estado.
-3. Se estiver desativado, pressione **Enter** para ativar.
-4. A interface cede o terminal para solicitar sua senha do `sudo`, se necessário, e volta ao MyDotty ao terminar.
-
-![Tela Auto-sync com o estado desativado e instrução para ativar com Enter](docs/images/auto-sync.png)
-
-Para desativar, abra **F6** novamente e confirme com **Enter**. **Esc** cancela sem mudar nada.
-
-Pelo terminal, as ações equivalentes são:
+Pelo terminal:
 
 ```sh
-mydotty --auto-sync
-mydotty --no-auto-sync
+mydotty --set packages=true
+mydotty --set login=true
+mydotty --set logout=true
+mydotty --set update=true
+# Para desativar uma opção, use false no lugar de true.
 ```
 
-Também é possível instalar e ativar em uma única execução:
+### Sincronizar ao atualizar o sistema
+
+Em **Arch Linux e CachyOS**, a opção **Atualização de pacotes** instala um hook do pacman. Após uma atualização concluída por `pacman -Syu` ou Cachy-Update, o hook agenda o `--att` para dali a **15 segundos**. Outra transação nesse intervalo reinicia a contagem. A atualização dos pacotes não espera a sincronização terminar.
+
+A ativação dessa opção pode solicitar `sudo` para instalar o hook. Execute o MyDotty com seu usuário normal. Os comandos `mydotty --auto-sync` e `mydotty --no-auto-sync` continuam disponíveis e alteram somente essa opção. `./install.sh --auto-sync` instala e ativa essa integração.
+
+### Sincronizar no início e no encerramento da sessão
+
+Essas opções usam serviços do **systemd do usuário**, sem depender do pacman:
+
+- **Início de sessão:** executa `--att` quando a sessão gráfica ou o gerenciador do usuário inicia. A ativação vale para a próxima sessão e não dispara uma sincronização imediatamente.
+- **Encerramento de sessão:** prepara um serviço que executa a sincronização quando a sessão gráfica termina ou antes de o gerenciador do usuário encerrar, normalmente após sair da última sessão. Desativar a opção não dispara a sincronização.
+
+A integração com a sessão gráfica usa `graphical-session.target`, gerenciado por desktops como GNOME e KDE. Com **linger** habilitado, o gerenciador do usuário inicia no boot e permanece ativo após o logout: o ciclo da sessão gráfica continua disparando as ações, mas logins somente em TTY/SSH acompanham o início e a parada desse gerenciador. Abrir ou fechar um terminal dentro do desktop não dispara uma sincronização de sessão. No primeiro login, o início do gerenciador e da sessão gráfica podem gerar duas sincronizações; elas são executadas em sequência. Consulte a [documentação de loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html) para o ciclo de vida do gerenciador.
+
+As automações usam o repositório padrão `~/.dotfiles`. Precisam de rede e de acesso ao Git sem pedir senha. Ao ativar, o MyDotty importa o agente SSH disponível para o gerenciador do usuário. No logout, o envio depende de a rede e o agente ainda estarem disponíveis; se falhar, as alterações ficam salvas localmente para a próxima sincronização. Os disparos simultâneos são executados em sequência para não disputar o mesmo repositório. Arquivos novos continuam exigindo uma adição explícita.
+
+### Atualizar o MyDotty automaticamente
+
+**Auto update → Ativo** cria um timer diário, com até cinco minutos de variação. Se o horário for perdido com a máquina desligada, o systemd agenda a verificação quando o timer voltar a ficar ativo. A atualização baixa o código do repositório oficial, compila e verifica o novo executável antes de substituí-lo. Uma falha de download, compilação ou verificação mantém a versão instalada. A nova versão é usada na próxima execução do comando.
+
+É necessário ter **Go e Git instalados** e permissão de escrita na pasta do executável. Para uma instalação por usuário:
 
 ```sh
-./install.sh --auto-sync
+./install.sh
 ```
 
-Execute esses comandos **sem colocar sudo na frente**. O MyDotty pede permissão apenas para criar ou remover o hook do pacman; a sincronização é executada pelo seu usuário.
+O instalador configura o PATH para priorizar essa instalação sobre uma versão global; abra um novo terminal após instalar. Se Go ou o systemd do usuário estiverem indisponíveis, a instalação termina e informa que a configuração ficou pendente. Execute o instalador novamente quando os requisitos estiverem disponíveis. Para uma instalação global sem permissão de escrita, continue usando `git pull` e `PREFIX=/usr/local ./install.sh` para atualizar manualmente. A atualização automática não pede senha em segundo plano.
 
-### Como funciona
-
-Depois de uma transação concluída que atualize pacotes, o hook agenda um timer do systemd do seu usuário. Ele espera **15 segundos** e executa `mydotty --att` em segundo plano. Se outra transação terminar nesse intervalo, a contagem reinicia.
-
-A atualização do sistema não espera o envio dos arquivos terminar. Atualizações individuais e reinstalações de pacotes também podem disparar a sincronização; se não houver uma transação de atualização, o hook não é executado.
-
-É necessário manter sua **sessão aberta** e ter acesso ao Git que funcione sem pedir senha a cada sincronização. Se você usa um agente SSH, ative o auto-sync em uma sessão com o agente disponível. Sem conexão ou em caso de conflito, consulte o resultado e use **F3** para tentar novamente quando resolver a situação.
-
-A integração usa o repositório padrão `~/.dotfiles`. Ela não atualiza o programa MyDotty e não acompanha novos arquivos que você ainda não adicionou.
-
-### Replicar no outro computador
-
-Em outro computador com **Arch Linux ou CachyOS**:
-
-1. Instale a versão atual do MyDotty.
-2. Conecte seu repositório de configurações com **F4** e confira se **F3** funciona.
-3. Abra **F6** e confirme a ativação com **Enter**.
-
-Cada usuário ativa a integração na própria máquina. Não é necessário copiar hooks ou serviços manualmente.
-
-### Consultar o resultado
+### Consultar os resultados
 
 ```sh
 journalctl --user -u mydotty-sync.service -n 30 --no-pager
+journalctl --user -u mydotty-login.service -u mydotty-logout.service -n 30 --no-pager
+journalctl --user -u mydotty-update.service -n 30 --no-pager
+systemctl --user list-timers 'mydotty-*'
 ```
 
-Os arquivos criados são:
+As opções criam seus próprios arquivos em `~/.config/systemd/user` (ou `XDG_CONFIG_HOME/systemd/user`):
 
-- `~/.config/systemd/user/mydotty-sync.service` e `mydotty-sync.timer` (ou dentro de `XDG_CONFIG_HOME`, se personalizado).
-- `/etc/pacman.d/hooks/zz-mydotty-UID.hook`, onde `UID` é o identificador do seu usuário.
+| Opção | Arquivos |
+| --- | --- |
+| Pacotes | `mydotty-sync.service`, `mydotty-sync.timer` e `/etc/pacman.d/hooks/zz-mydotty-UID.hook` |
+| Início de sessão | `mydotty-login.service` |
+| Encerramento de sessão | `mydotty-logout.service` |
+| Auto update | `mydotty-update.service`, `mydotty-update.timer` |
 
-A desativação remove esses arquivos e cancela o timer pendente, mantendo o MyDotty instalado. Uma sincronização que já esteja em andamento pode terminar normalmente.
+Desativar uma opção remove apenas a integração correspondente. Uma sincronização ou atualização já em andamento pode terminar normalmente. No outro computador, configure as opções desejadas novamente; não é necessário copiar hooks ou serviços manualmente.
 
-Referências técnicas: [hooks do pacman](https://man.archlinux.org/man/alpm-hooks.5) e [serviços de usuário via systemctl](https://man.archlinux.org/man/systemctl.1.en).
+Referências técnicas: [hooks do pacman](https://man.archlinux.org/man/alpm-hooks.5), [serviços do systemd](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html) e [timers](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html).
 
 ## Quando algo não funcionar
 
 | O que aconteceu | O que fazer |
 | --- | --- |
 | O instalador pede Go | Instale Go 1.24 ou superior para compilar a partir deste repositório |
-| `mydotty` não foi encontrado | Confira se a pasta de instalação está no PATH; o padrão é `/usr/local/bin` |
+| `mydotty` não foi encontrado | Abra um novo terminal para carregar o PATH configurado; o padrão é `~/.local/bin` |
 | Não foi possível acessar o repositório | Confira a URL e o acesso SSH ou as credenciais do Git |
 | A instalação encontrou um arquivo existente | Mova o caminho indicado para um backup e tente novamente com **F4** ou `--apply` |
 | Estou sem conexão | Suas alterações ficam salvas localmente; tente **F3** novamente quando a conexão voltar |
@@ -265,7 +276,9 @@ Referências técnicas: [hooks do pacman](https://man.archlinux.org/man/alpm-hoo
 | O terminal está pequeno | Amplie para pelo menos **60 colunas × 16 linhas** |
 | F2 ou F3 controla brilho ou volume no notebook | Experimente **Fn+F2** ou **Fn+F3** |
 
-A sincronização combina alterações compatíveis por merge. Em caso de conflito, a interface lista os caminhos e pede qual versão dos arquivos inteiros manter ativa: **L** para esta máquina, **R** para o remoto, ou **Esc** para cancelar. A escolha vale para todos os arquivos em conflito; as duas versões continuam no histórico. No terminal, `mydotty --att` sincroniza direto e, somente se houver conflito, mostra os caminhos e pergunta qual versão manter (**L**, **R** ou **C** para cancelar, seguido de Enter). Para escolher sem interação, use `mydotty --att --keep local` ou `mydotty --att --keep remote`. O auto-sync preserva as versões e informa o conflito para você decidir depois. Outros erros são exibidos sem pedir uma escolha de versão. O MyDotty não faz envio forçado.
+A sincronização combina alterações compatíveis por merge. Em caso de conflito, a interface lista os caminhos e pede qual versão dos arquivos inteiros manter ativa: **L** para esta máquina, **R** para o remoto, ou **Esc** para cancelar. A escolha vale para todos os arquivos em conflito; as duas versões continuam no histórico. No terminal, `mydotty --add CAMINHO` e `mydotty --att` sincronizam direto e, somente se houver conflito, mostram os caminhos e perguntam qual versão manter (**L**, **R** ou **C** para cancelar, seguido de Enter). Para escolher sem interação, use `mydotty --att --keep local` ou `mydotty --att --keep remote`. O auto-sync preserva as versões e informa o conflito para você decidir depois. Outros erros são exibidos sem pedir uma escolha de versão. O MyDotty não faz envio forçado.
+
+Quando o remoto adiciona um arquivo que já existe localmente, mas ainda não é acompanhado nesta máquina, o `--att` compara a data de modificação local com a data do último commit remoto que alterou aquele arquivo. Se o local for mais antigo, aceita automaticamente a versão remota. Datas iguais ou locais mais recentes mantêm a proteção do Git contra sobrescrita. Se o merge falhar, os arquivos locais substituídos nessa tentativa são restaurados. O Git não armazena a data de modificação original dos arquivos; a comparação usa a data do commit.
 
 ## Detalhes e desenvolvimento
 

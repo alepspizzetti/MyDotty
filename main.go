@@ -38,7 +38,10 @@ type model struct {
 	repo                           repository
 	state                          snapshot
 	cursor, width, height, offset  int
-	busy, missing, autoSync        bool
+	busy, missing                  bool
+	settingsOpen                   bool
+	settings                       settings
+	settingsCursor                 int
 	prompt, input, message, detail string
 	completions                    []string
 	lastCompletion, completionNote string
@@ -60,7 +63,9 @@ func (m model) Init() tea.Cmd {
 	if m.missing {
 		return nil
 	}
-	return m.perform(func() (string, error) { return "F2 adiciona arquivos ou pastas. F3 salva e sincroniza tudo.", nil })
+	return m.perform(func() (string, error) {
+		return "F2 adiciona e sincroniza. F3 sincroniza novas alterações. Tab abre configurações.", nil
+	})
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -69,6 +74,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		if m.detail != "" {
 			m.offset = min(m.offset, max(0, len(strings.Split(m.detail, "\n"))-m.diffPageSize()))
+		}
+	case settingsResult:
+		m.busy = false
+		m.settings = msg.value
+		m.message = "Configuração salva."
+		if msg.err != nil {
+			m.message = msg.err.Error()
 		}
 	case result:
 		m.busy = false
@@ -105,6 +117,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.busy {
 			return m, nil
 		}
+		if m.settingsOpen {
+			switch key {
+			case "esc", "tab", "f6":
+				m.settingsOpen = false
+			case "q":
+				return m, tea.Quit
+			case "up", "k":
+				m.settingsCursor = max(0, m.settingsCursor-1)
+			case "down", "j":
+				m.settingsCursor = min(len(settingOptions)-1, m.settingsCursor+1)
+			case " ", "enter":
+				binary, err := os.Executable()
+				if err != nil {
+					m.message = err.Error()
+					return m, nil
+				}
+				key := settingOptions[m.settingsCursor].key
+				value := fmt.Sprintf("%s=%t", key, !m.settings.enabled(key))
+				m.busy = true
+				var details bytes.Buffer
+				command := exec.Command(binary, "--set", value)
+				command.Stderr = io.MultiWriter(os.Stderr, &details)
+				return m, tea.ExecProcess(command, func(err error) tea.Msg {
+					s, readErr := loadSettings()
+					if err != nil {
+						if text := strings.TrimSpace(details.String()); text != "" {
+							err = fmt.Errorf("%s", text)
+						} else {
+							err = fmt.Errorf("a configuração não foi concluída: %w", err)
+						}
+					} else {
+						err = readErr
+					}
+					return settingsResult{value: s, err: err}
+				})
+			}
+			return m, nil
+		}
 		if m.prompt == "conflict" {
 			switch key {
 			case "up", "down", "pgup", "pgdown":
@@ -131,34 +181,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.prompt == "auto-sync" {
-			switch key {
-			case "esc":
-				m.prompt = ""
-			case "enter":
-				binary, err := os.Executable()
-				if err != nil {
-					m.message = err.Error()
-					m.prompt = ""
-					return m, nil
-				}
-				flag, message := "--auto-sync", "Auto-sync ativado para as próximas atualizações do sistema."
-				if m.autoSync {
-					flag, message = "--no-auto-sync", "Auto-sync desativado."
-				}
-				m.prompt, m.busy = "", true
-				var details bytes.Buffer
-				command := exec.Command(binary, flag)
-				command.Stderr = io.MultiWriter(os.Stderr, &details)
-				return m, tea.ExecProcess(command, func(err error) tea.Msg {
-					if err != nil {
-						err = fmt.Errorf("a configuração do auto-sync não foi concluída: %v\n%s", err, strings.TrimSpace(details.String()))
-					}
-					return result{state: m.state, text: message, err: err}
-				})
-			}
-			return m, nil
-		}
+
 		if m.prompt != "" {
 			switch key {
 			case "esc":
@@ -188,7 +211,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.busy = true
 				switch prompt {
 				case "add":
-					return m, m.perform(func() (string, error) { return m.repo.add(value) })
+					return m, m.perform(func() (string, error) { return m.repo.addAndSync(value, "") })
 				case "remove":
 					return m, m.perform(func() (string, error) { return m.repo.remove(value) })
 				case "commit":
@@ -229,8 +252,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detail, m.offset = commandHelp, 0
 			return m, nil
 		}
-		if key == "f6" {
-			m.autoSync, m.prompt = autoSyncEnabled(), "auto-sync"
+		if key == "f6" || key == "tab" {
+			m.openSettings()
 			return m, nil
 		}
 		if m.missing {
@@ -344,8 +367,8 @@ const commandHelp = `MYDOTTY · GUIA RÁPIDO
 
 1. Crie um repositório no GitHub, GitLab ou outro serviço.
 2. Conecte a URL com F4. O MyDotty prepara o .dotfiles.
-3. Adicione arquivos ou pastas com F2 (Tab completa).
-4. Use F3 para salvar, baixar e enviar suas alterações.
+3. F2 adiciona, salva e sincroniza (Tab completa).
+4. Use F3 para sincronizar as próximas alterações.
 
 NO TERMINAL                    NA INTERFACE
 mydotty --init URL              F4  Conectar
@@ -356,13 +379,29 @@ mydotty --diff CAMINHO          Enter  Ver alterações
 mydotty --remove CAMINHO        Del  Não acompanhar
 mydotty --apply                 F4  Repetir instalação
 mydotty --help                  F1  Comandos
-mydotty --auto-sync             F6  Ativar auto-sync
-mydotty --no-auto-sync          F6  Desativar auto-sync
+mydotty --settings              F6 / Tab  Configurações
+mydotty --auto-sync             Ativar sync após pacman
+mydotty --no-auto-sync          Desativar sync após pacman
+mydotty --update                Atualizar o programa
+
+CONFIGURAÇÕES · F6 OU TAB
+↑/↓ selecionam; Espaço ou Enter ativa/desativa e salva.
+As três opções de auto-sync são independentes:
+- Atualização de pacotes: pacman / Cachy-Update.
+- Início: ao iniciar a sessão gráfica ou systemd do usuário.
+- Encerramento: ao sair da sessão gráfica ou parar o usuário.
+A sessão gráfica usa graphical-session.target. Em TTY/SSH
+com linger, vale o ciclo do gerenciador (boot/desligamento).
+Requer rede e Git sem senha na hora da sincronização.
+Auto update atualiza o MyDotty diariamente. Requer Go
+instalado e permissão na pasta do executável (~/.local/bin).
+Pelo terminal: mydotty --set login=true (ou false).
+Opções: packages, login, logout, update.
 
 CONFLITOS AO SINCRONIZAR
 L mantém arquivos inteiros desta máquina; R, do remoto.
 Esc cancela. As duas versões continuam no histórico.
-No terminal, --att pergunta quando houver conflito.
+No terminal, --add e --att perguntam em caso de conflito.
 Sem interação: --att --keep local / --att --keep remote.
 
 CAMINHOS
@@ -396,13 +435,13 @@ func fileStatus(status string) (string, lipgloss.Style) {
 }
 
 func (m model) help() string {
-	keys := []string{"F2 Adicionar", "F3 Sincronizar", "F4 Conectar", "F6 Auto-sync", "Enter Ver alterações", "Del Não acompanhar", "F1 Comandos", "F5 Atualizar lista", "Esc Sair"}
+	keys := []string{"F2 Adicionar", "F3 Sincronizar", "F4 Conectar", "F6 Configurações", "Enter Ver alterações", "Del Não acompanhar", "F1 Comandos", "F5 Atualizar lista", "Esc Sair"}
 	if m.detail != "" {
 		keys = []string{"↑↓ Rolar", "PgUp/PgDn Página", "Esc Voltar", "q Sair"}
 	} else if m.missing {
-		keys = []string{"F4 Conectar repositório", "F6 Auto-sync", "F1 Comandos", "Esc Sair"}
+		keys = []string{"F4 Conectar repositório", "F6 Configurações", "F1 Comandos", "Esc Sair"}
 	} else if m.state.needsCheckout {
-		keys = []string{"F4 Instalar arquivos", "F6 Auto-sync", "F1 Comandos", "Esc Sair"}
+		keys = []string{"F4 Instalar arquivos", "F6 Configurações", "F1 Comandos", "Esc Sair"}
 	}
 	if m.prompt != "" {
 		keys = []string{"Enter Confirmar", "Esc Cancelar"}
@@ -412,6 +451,9 @@ func (m model) help() string {
 		if m.prompt == "add" {
 			keys = append([]string{"Tab Completar caminho"}, keys...)
 		}
+	}
+	if m.settingsOpen {
+		keys = []string{"↑↓ Selecionar", "Espaço/Enter Alternar", "Tab/Esc Voltar", "q Sair"}
 	}
 	return shortcuts(keys, m.width-4)
 }
@@ -443,7 +485,11 @@ func (m model) View() string {
 	if m.state.remote != "" {
 		meta = muted.Render("Destino: ") + accent.Render(displayPath(m.state.remote))
 	}
-	header := spread(title, badge, width) + "\n" + muted.Render(fit(displayPath(m.repo.dir), width)) + "\n" + fit(meta, width)
+	tabs := accent.Render("[Arquivos]") + muted.Render("  Configurações · Tab / F6")
+	if m.settingsOpen {
+		tabs = muted.Render("Arquivos  ") + accent.Render("[Configurações]") + muted.Render(" · Tab / Esc")
+	}
+	header := spread(title, badge, width) + "\n" + fit(tabs, width) + "\n" + fit(meta, width)
 
 	notice := "\n" + muted.Render(fit("Pronto para cuidar dos seus dotfiles.", width)) + "\n"
 	if m.message != "" {
@@ -462,15 +508,20 @@ func (m model) View() string {
 		input = ansi.TruncateLeft(input, max(0, ansi.StringWidth(input)-width+6), "…")
 		notice = accent.Render(fit(labels[m.prompt], width)) + "\n" + selection.Render(fit(" › "+input+"▏", width)) + "\n" + muted.Render(fit(m.completionNote, width))
 	}
-	if m.prompt == "auto-sync" {
-		status, action := "DESATIVADO", "ativar"
-		if m.autoSync {
-			status, action = "ATIVADO", "desativar"
-		}
-		notice = accent.Render(fit("AUTO-SYNC · "+status, width)) + "\n" + ink.Render(fit("Sincroniza após atualizações do pacman / Cachy-Update.", width)) + "\n" + muted.Render(fit("Enter para "+action+" · pode solicitar sua senha do sudo", width))
-	}
+
 	if m.prompt == "conflict" {
 		notice = accent.Render(fit("CONFLITO · qual versão deve ficar ativa?", width)) + "\n" + ink.Render(fit("L: desta máquina · R: remoto (arquivos inteiros)", width)) + "\n" + muted.Render(fit("Esc cancela e preserva as duas versões no histórico.", width))
+	}
+	if m.settingsOpen {
+		message := strings.ReplaceAll(safe(m.message), "\n", " ")
+		if m.busy {
+			message = "Aplicando configuração…"
+		}
+		lines := strings.Split(ansi.Wrap(message, width, ""), "\n")
+		for len(lines) < 2 {
+			lines = append(lines, "")
+		}
+		notice = accent.Render(fit(settingOptions[m.settingsCursor].description, width)) + "\n" + ink.Render(fit(lines[0], width)) + "\n" + muted.Render(fit(lines[1], width))
 	}
 	help := m.help()
 	padding := 0
@@ -481,7 +532,9 @@ func (m model) View() string {
 	bodyHeight := m.height - 2*padding - lipgloss.Height(header) - lipgloss.Height(notice) - lipgloss.Height(help)
 	rows := bodyHeight - 2
 	var body []string
-	if m.detail != "" {
+	if m.settingsOpen {
+		body = append(body, m.settingsRows(inner, rows)...)
+	} else if m.detail != "" {
 		lines := strings.Split(safe(m.detail), "\n")
 		page := m.diffPageSize()
 		offset := min(m.offset, max(0, len(lines)-page))

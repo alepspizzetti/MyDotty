@@ -2,7 +2,7 @@
 set -eu
 
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-prefix=${PREFIX:-/usr/local}
+prefix=${PREFIX:-"$HOME/.local"}
 case "$prefix" in
     /*) ;;
     *) printf '%s\n' 'Erro: PREFIX precisa ser um caminho absoluto.' >&2; exit 1 ;;
@@ -38,7 +38,8 @@ trap 'exit 1' 1 2 15
 printf '%s\n' 'MyDotty · instalação'
 if command -v go >/dev/null 2>&1; then
     printf '%s\n' 'Compilando para esta máquina…'
-    (cd "$source_dir" && go build -trimpath -ldflags="-s -w" -o "$build_dir/mydotty" .)
+    revision=$(git -C "$source_dir" rev-parse --verify HEAD 2>/dev/null || true)
+    (cd "$source_dir" && go build -trimpath -ldflags="-s -w -X main.buildRevision=$revision" -o "$build_dir/mydotty" .)
     binary=$build_dir/mydotty
 elif [ -x "$source_dir/mydotty" ]; then
     printf '%s\n' 'Usando o executável disponível nesta pasta.'
@@ -65,6 +66,10 @@ else
     sudo install -m 755 "$binary" "$bin_dir/mydotty"
 fi
 
+if ! "$bin_dir/mydotty" --install-setup; then
+    printf '%s\n' 'O programa foi instalado, mas a configuração automática ficou pendente. Consulte a mensagem acima.' >&2
+fi
+
 if [ "$auto_sync" = true ]; then
     "$bin_dir/mydotty" --auto-sync
 fi
@@ -72,6 +77,6 @@ fi
 printf '\nInstalado em %s/mydotty\n' "$bin_dir"
 case ":$PATH:" in
     *":$bin_dir:"*) ;;
-    *) printf 'Inclua %s no PATH do seu shell para chamar mydotty de qualquer pasta.\n' "$bin_dir" ;;
+    *) printf 'Abra um novo terminal para carregar o PATH configurado, ou execute %s/mydotty neste terminal.\n' "$bin_dir" ;;
 esac
 printf '\n%s\n' 'Pronto! Comandos disponíveis:' '  mydotty' '  mydotty --init URL_DO_SEU_REPOSITORIO' '  mydotty --add .config/kitty' '  mydotty --att' '  mydotty --help'

@@ -93,21 +93,44 @@ exec "$@"`,
 	}
 }
 
-func TestTUIAutoSyncConfirmation(t *testing.T) {
+func TestTUISettings(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := model{width: 60, height: 16}
 	m = press(m, tea.KeyF6)
-	if m.prompt != "auto-sync" || !strings.Contains(m.View(), "AUTO-SYNC") {
-		t.Fatal("F6 did not open auto-sync settings")
+	if !m.settingsOpen || !strings.Contains(m.View(), "AUTO-SYNC") || !strings.Contains(m.View(), "AUTO UPDATE") {
+		t.Fatal("F6 did not open all automation settings")
 	}
 	m = press(m, tea.KeyEsc)
-	if m.prompt != "" {
-		t.Fatal("Esc did not cancel auto-sync settings")
+	if m.settingsOpen {
+		t.Fatal("Esc did not close settings")
 	}
-	for _, enabled := range []bool{false, true} {
-		m.prompt, m.autoSync = "auto-sync", enabled
-		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		if cmd == nil || !next.(model).busy {
-			t.Fatal("confirmation did not hand configuration to the terminal")
+	m = press(m, tea.KeyTab)
+	if !m.settingsOpen {
+		t.Fatal("Tab did not switch to settings")
+	}
+	for i := range settingOptions {
+		m.settingsCursor = i
+		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+		if cmd == nil || !next.(model).busy || !next.(model).settingsOpen {
+			t.Fatal("toggle did not hand configuration to the terminal")
 		}
+	}
+	m = press(m, tea.KeyDown)
+	if m.settingsCursor != 3 {
+		t.Fatal("cursor moved past final option")
+	}
+	m = press(m, tea.KeyUp)
+	if m.settingsCursor != 2 {
+		t.Fatal("cursor did not move up")
+	}
+	m.settings = settings{true, true, true, true}
+	if strings.Count(m.View(), "[x]") != 4 {
+		t.Fatal("independent selections are not visible")
+	}
+	m.busy = true
+	next, _ := m.Update(settingsResult{value: settings{LoginSync: true}})
+	m = next.(model)
+	if m.busy || !m.settings.LoginSync || m.settings.PackageSync {
+		t.Fatal("settings were not refreshed after applying a change")
 	}
 }

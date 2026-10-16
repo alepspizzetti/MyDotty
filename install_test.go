@@ -50,8 +50,18 @@ func TestInstallerDelegatesAutoSyncToInstalledCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(calls) != "--help\n--auto-sync\n--no-auto-sync\n" {
+	if string(calls) != "--help\n--install-setup\n--auto-sync\n--no-auto-sync\n" {
 		t.Fatalf("unexpected invocations: %q", calls)
+	}
+	// A plain installation should default to this user's home without PREFIX.
+	home := filepath.Join(root, "home with spaces")
+	cmdDefault := exec.Command("/bin/sh", filepath.Join(source, "install.sh"))
+	cmdDefault.Env = []string{"PATH=" + commands, "HOME=" + home, "TEST_ROOT=" + root}
+	if output, err := cmdDefault.CombinedOutput(); err != nil {
+		t.Fatalf("default installation: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "mydotty")); err != nil {
+		t.Fatal("default installation is not per-user:", err)
 	}
 	cmd := exec.Command("/bin/sh", filepath.Join(source, "install.sh"), "--unknown")
 	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "Opção desconhecida") {

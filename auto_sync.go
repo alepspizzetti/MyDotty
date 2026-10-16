@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 )
 
 type autoSyncConfig struct {
@@ -86,7 +85,7 @@ func (c autoSyncConfig) configure(enable bool, out, stderr io.Writer) error {
 		return nil
 	}
 	// Quote an argument for systemd's ExecStart syntax, including its expansions.
-	quotedBinary := `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, `%`, `%%`, `$`, `$$`).Replace(c.binary) + `"`
+	quotedBinary := systemdQuote(c.binary)
 	service := fmt.Sprintf(`[Unit]
 Description=Sincronizar dotfiles após atualizar pacotes
 ConditionPathExists=%%h/.dotfiles/HEAD

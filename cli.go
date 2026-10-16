@@ -34,15 +34,20 @@ func runWithInput(args []string, input io.Reader, out, stderr io.Writer) int {
 	dir := flags.String("repo", filepath.Join(home, ".dotfiles"), "pasta interna do MyDotty")
 	root := flags.String("home", home, "pasta que contém suas configurações")
 	url := flags.String("init", "", "conectar ao repositório: --init URL")
-	add := flags.String("add", "", "acompanhar um arquivo ou pasta: --add CAMINHO")
+	add := flags.String("add", "", "adicionar, salvar e sincronizar um arquivo ou pasta: --add CAMINHO")
 	remove := flags.String("remove", "", "deixar de acompanhar, mantendo os arquivos: --remove CAMINHO")
 	diff := flags.String("diff", "", "ver alterações de um arquivo: --diff CAMINHO")
 	att := flags.Bool("att", false, "salvar, baixar e enviar todas as alterações acompanhadas")
 	flags.BoolVar(att, "sync", false, "sinônimo de --att")
-	keep := flags.String("keep", "", "com --att, resolver conflitos mantendo arquivos inteiros: local ou remote")
+	keep := flags.String("keep", "", "com --add ou --att, resolver conflitos mantendo arquivos inteiros: local ou remote")
 	status := flags.Bool("status", false, "listar arquivos acompanhados e suas alterações")
 	autoEnable := flags.Bool("auto-sync", false, "ativar sincronização após atualizações do pacman (Arch/CachyOS)")
-	autoDisable := flags.Bool("no-auto-sync", false, "desativar a sincronização automática")
+	autoDisable := flags.Bool("no-auto-sync", false, "desativar sincronização após atualizações do pacman")
+	settingsView := flags.Bool("settings", false, "abrir a aba de configurações")
+	setOption := flags.String("set", "", "configurar automação: packages, login, logout ou update (ex.: --set login=true)")
+	update := flags.Bool("update", false, "atualizar o programa MyDotty")
+	installSetup := flags.Bool("install-setup", false, "configurar PATH e atualização automática após instalar (uso do instalador)")
+	autoRun := flags.String("auto-run", "", "executar uma automação ativa: login, logout ou update (uso do systemd)")
 	apply := flags.Bool("apply", false, "tentar instalar novamente após mover arquivos em conflito")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "MyDotty · suas configurações salvas e sincronizadas\n\nUse mydotty para abrir a interface, ou escolha uma ação:")
@@ -58,7 +63,7 @@ func runWithInput(args []string, input io.Reader, out, stderr io.Writer) int {
 	actions := 0
 	flags.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "init", "add", "remove", "diff", "att", "sync", "status", "apply", "auto-sync", "no-auto-sync":
+		case "init", "add", "remove", "diff", "att", "sync", "status", "apply", "auto-sync", "no-auto-sync", "settings", "set", "update", "auto-run", "install-setup":
 			actions++
 		}
 	})
@@ -66,17 +71,60 @@ func runWithInput(args []string, input io.Reader, out, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Escolha uma ação por vez. Use mydotty --help para ver exemplos.")
 		return 2
 	}
-	if *keep != "" && (!*att || (*keep != "local" && *keep != "remote")) {
-		fmt.Fprintln(stderr, "Use --keep local ou --keep remote junto com --att / --sync.")
+	if *keep != "" && ((!*att && *add == "") || (*keep != "local" && *keep != "remote")) {
+		fmt.Fprintln(stderr, "Use --keep local ou --keep remote junto com --add / --att / --sync.")
 		return 2
 	}
-	if *autoEnable || *autoDisable {
-		if err := configureAutoSync(*autoEnable, out, stderr); err != nil {
+	if *autoEnable || *autoDisable || *setOption != "" || *update || *installSetup {
+		var actionErr error
+		switch {
+		case *installSetup:
+			actionErr = setupInstallation(out, stderr)
+		case *update:
+			binary, err := os.Executable()
+			if err == nil {
+				actionErr = updateBinary(binary, updateRepository, out)
+			} else {
+				actionErr = err
+			}
+		case *setOption != "":
+			actionErr = changeSetting(*setOption, out, stderr)
+		default:
+			actionErr = changeSetting(fmt.Sprintf("packages=%t", *autoEnable), out, stderr)
+		}
+		if err := actionErr; err != nil {
 			fmt.Fprintln(stderr, safe(err.Error()))
 			return 1
 		}
 		return 0
 	}
+	if *autoRun != "" {
+		if *autoRun != "login" && *autoRun != "logout" && *autoRun != "update" {
+			fmt.Fprintln(stderr, "Use --auto-run login, logout ou update.")
+			return 2
+		}
+		s, err := loadSettings()
+		if err != nil {
+			fmt.Fprintln(stderr, safe(err.Error()))
+			return 1
+		}
+		if !s.enabled(*autoRun) {
+			return 0
+		}
+		if *autoRun == "update" {
+			binary, err := os.Executable()
+			if err == nil {
+				err = updateBinary(binary, updateRepository, out)
+			}
+			if err != nil {
+				fmt.Fprintln(stderr, safe(err.Error()))
+				return 1
+			}
+			return 0
+		}
+		*att = true
+	}
+
 	if _, err := exec.LookPath("git"); err != nil {
 		fmt.Fprintln(stderr, "Instale o Git para usar o MyDotty.")
 		return 1
@@ -92,10 +140,13 @@ func runWithInput(args []string, input io.Reader, out, stderr io.Writer) int {
 		return 1
 	}
 	r := repository{repoDir, workTree}
-	if actions == 0 {
+	if actions == 0 || *settingsView {
 		_, err = os.Lstat(repoDir)
 		missing := os.IsNotExist(err)
 		m := model{repo: r, width: 80, height: 24, missing: missing, busy: !missing}
+		if *settingsView {
+			m.openSettings()
+		}
 		_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	} else {
 		var text string
@@ -103,7 +154,7 @@ func runWithInput(args []string, input io.Reader, out, stderr io.Writer) int {
 		case strings.TrimSpace(*url) != "":
 			text, err = r.setup(strings.TrimSpace(*url))
 		case *add != "":
-			text, err = r.add(*add)
+			text, err = r.addAndSync(*add, *keep)
 		case *remove != "":
 			text, err = r.remove(*remove)
 		case *diff != "":
@@ -112,35 +163,6 @@ func runWithInput(args []string, input io.Reader, out, stderr io.Writer) int {
 			}
 		case *att:
 			text, err = r.syncKeeping(*keep)
-			var conflict *syncConflict
-			if *keep == "" && input != nil && errors.As(err, &conflict) {
-				fmt.Fprintln(stderr, safe(err.Error()))
-				scanner := bufio.NewScanner(input)
-				for {
-					fmt.Fprint(stderr, "Qual versão manter em TODOS os arquivos em conflito? [L] Local / [R] Remoto / [C] Cancelar: ")
-					if !scanner.Scan() {
-						if scanErr := scanner.Err(); scanErr != nil {
-							fmt.Fprintln(stderr, safe(scanErr.Error()))
-						}
-						return 1
-					}
-					choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
-					switch choice {
-					case "l", "local":
-						choice = "local"
-					case "r", "remote", "remoto":
-						choice = "remote"
-					case "", "c", "cancelar":
-						fmt.Fprintln(stderr, "Cancelado. As duas versões foram preservadas.")
-						return 1
-					default:
-						fmt.Fprintln(stderr, "Digite L, R ou C e pressione Enter.")
-						continue
-					}
-					text, err = r.syncKeeping(choice)
-					break
-				}
-			}
 		case *apply:
 			text, err = r.apply()
 		case *status:
@@ -160,6 +182,35 @@ func runWithInput(args []string, input io.Reader, out, stderr io.Writer) int {
 			}
 		default:
 			err = fmt.Errorf("informe o valor da ação. Veja mydotty --help")
+		}
+		var conflict *syncConflict
+		if *keep == "" && input != nil && errors.As(err, &conflict) {
+			fmt.Fprintln(stderr, safe(err.Error()))
+			scanner := bufio.NewScanner(input)
+			for {
+				fmt.Fprint(stderr, "Qual versão manter em TODOS os arquivos em conflito? [L] Local / [R] Remoto / [C] Cancelar: ")
+				if !scanner.Scan() {
+					if scanErr := scanner.Err(); scanErr != nil {
+						fmt.Fprintln(stderr, safe(scanErr.Error()))
+					}
+					return 1
+				}
+				choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
+				switch choice {
+				case "l", "local":
+					choice = "local"
+				case "r", "remote", "remoto":
+					choice = "remote"
+				case "", "c", "cancelar":
+					fmt.Fprintln(stderr, "Cancelado. As duas versões foram preservadas.")
+					return 1
+				default:
+					fmt.Fprintln(stderr, "Digite L, R ou C e pressione Enter.")
+					continue
+				}
+				text, err = r.syncKeeping(choice)
+				break
+			}
 		}
 		if err == nil {
 			fmt.Fprintln(out, strings.TrimSpace(safe(text)))
